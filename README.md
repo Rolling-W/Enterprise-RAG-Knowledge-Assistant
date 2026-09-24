@@ -79,5 +79,10 @@ This repository is initialized as a clean engineering scaffold for the course as
 - Docker-based local deployment support
 - documentation and environment templates
 
+## Sprint 1 Notes
+- Initial backend and frontend scaffold prepared for assignment review.
+- Docker Compose and sample API routes are included for local demo.
+- Repository structure follows a clear engineering workflow suitable for future feature development.
+
 ## 🤝 Contributing
 This project is being developed by the team listed above. Contributions should follow a clear PR workflow and maintain a clean engineering structure.
