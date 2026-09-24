@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+.env
+.env.*
+
+# Node / React
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.coverage
+.pytest_cache/
+htmlcov/
