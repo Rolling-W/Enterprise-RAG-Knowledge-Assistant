@@ -64,11 +64,15 @@ Once the stack is up:
 
 ```http
 GET /health
+POST /api/v1/auth/login
+POST /api/v1/upload
 POST /api/v1/search
 ```
 
 ## 📄 Documentation
 - See [docs/api-spec.md](docs/api-spec.md) for the REST interface contract.
+- Once the backend is running, use the generated [Swagger UI](http://localhost:8000/docs)
+  or [OpenAPI JSON](http://localhost:8000/openapi.json) as the executable contract.
 - Architecture diagrams and planning notes are kept under the [docs](docs) directory.
 
 ## ✅ Assignment 3 Scaffold Status
