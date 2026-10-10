@@ -82,20 +82,22 @@ Every chunk payload must contain these access-control fields:
 | --- | --- | --- |
 | `document_id` | keyword | Stable source document identifier |
 | `chunk_id` | keyword | Stable chunk identifier |
-| `department` | keyword | Owning department, or `Global` |
-| `min_clearance` | integer | Minimum clearance required to retrieve the chunk |
+| `department_id` | keyword | Owning department identifier, or `Global` |
+| `clearance_level` | integer | Minimum clearance required to retrieve the chunk |
 | `content_type` | keyword | Source MIME type |
 | `title` | keyword | Display title |
 | `content` | text | Chunk text used for citation |
 | `page`, `line_start`, `line_end` | integer | Citation coordinates |
 
-`department` and `min_clearance` are indexed payload fields. The retrieval
+`department_id` and `clearance_level` are indexed payload fields. The retrieval
 adapter must pass the RBAC filter into Qdrant's vector search before ranking:
 
-- `min_clearance <= user.clearance`
+- `clearance_level <= user.clearance`
 - non-Executive users additionally match their department or `Global`
 - Executive users may search all departments, subject to clearance
 
 The implementation lives in `backend/qdrant_schema.py`; collection creation
-is explicit through `ensure_collection(client)` so application startup does not
-silently create or mutate infrastructure when Qdrant is unavailable.
+is explicit through `ensure_collection(client)`. Provision the local collection
+with `python -m backend.init_qdrant` after Qdrant is running; application
+startup does not silently create or mutate infrastructure when Qdrant is
+unavailable.

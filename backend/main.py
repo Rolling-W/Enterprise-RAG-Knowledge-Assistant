@@ -57,12 +57,36 @@ class Citation(BaseModel):
     line_end: int | None = Field(default=None, ge=1)
 
 
-class SearchResult(BaseModel):
-    doc_id: str
+class Chunk(BaseModel):
+    """Shared ingestion, retrieval, and frontend display representation."""
+
+    chunk_id: str
+    document_id: str
     title: str
-    score: float = Field(ge=0, le=1)
     content: str
+    content_type: str
+    department_id: str
+    clearance_level: int = Field(ge=1, le=3)
     citation: Citation
+
+    def to_qdrant_payload(self) -> dict[str, str | int | None]:
+        """Flatten the API chunk representation into the Qdrant payload shape."""
+        return {
+            "chunk_id": self.chunk_id,
+            "document_id": self.document_id,
+            "department_id": self.department_id,
+            "clearance_level": self.clearance_level,
+            "content_type": self.content_type,
+            "title": self.title,
+            "content": self.content,
+            "page": self.citation.page,
+            "line_start": self.citation.line_start,
+            "line_end": self.citation.line_end,
+        }
+
+
+class SearchResult(Chunk):
+    score: float = Field(ge=0, le=1)
 
 
 class SearchResponse(BaseModel):
@@ -237,10 +261,14 @@ def search(
     user: Annotated[AuthenticatedUser, Depends(require_user)],
 ) -> SearchResponse:
     result = SearchResult(
-        doc_id="doc_001",
+        chunk_id="chunk_001",
+        document_id="doc_001",
         title="Employee_Handbook.pdf",
         score=0.92,
         content="Sample retrieved chunk text for internal enterprise policy and onboarding guidance.",
+        content_type="application/pdf",
+        department_id="General",
+        clearance_level=1,
         citation=Citation(page=12, line_start=45, line_end=49),
     )
     results = [result] if user.clearance >= 1 else []

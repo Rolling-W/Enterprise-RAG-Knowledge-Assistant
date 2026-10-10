@@ -112,10 +112,14 @@ Response `200`:
   "search_mode": "hybrid",
   "results": [
     {
-      "doc_id": "doc_001",
+      "document_id": "doc_001",
+      "chunk_id": "chunk_001",
       "title": "Employee_Handbook.pdf",
       "score": 0.92,
       "content": "Sample retrieved chunk text...",
+      "content_type": "application/pdf",
+      "department_id": "HR",
+      "clearance_level": 1,
       "citation": {
         "page": 12,
         "line_start": 45,
