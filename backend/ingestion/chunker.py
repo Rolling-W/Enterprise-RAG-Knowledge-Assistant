@@ -12,7 +12,19 @@ class DocumentChunker:
         department: str,
         min_clearance: int,
         max_words: int = 400,
+        overlap_words: int = 50,
     ) -> list[DocumentChunk]:
+
+        if max_words <= 0:
+            raise ValueError("max_words must be greater than 0")
+
+        if overlap_words < 0:
+            raise ValueError("overlap_words cannot be negative")
+
+        if overlap_words >= max_words:
+            raise ValueError(
+                "overlap_words must be smaller than max_words"
+            )
 
         chunks: list[DocumentChunk] = []
 
@@ -32,7 +44,7 @@ class DocumentChunker:
                 and self._is_section_heading(element)
             )
 
-            if size_exceeded or section_changed:
+            if section_changed:
                 chunks.append(
                     self._build_chunk(
                         current_elements,
@@ -44,6 +56,26 @@ class DocumentChunker:
 
                 current_elements = []
                 current_word_count = 0
+
+            elif size_exceeded:
+                chunks.append(
+                    self._build_chunk(
+                        current_elements,
+                        document_id,
+                        department,
+                        min_clearance,
+                    )
+                )
+
+                current_elements = self._get_overlap_elements(
+                    current_elements,
+                    overlap_words,
+                )
+
+                current_word_count = sum(
+                    len(overlap_element.text.split())
+                    for overlap_element in current_elements
+                )
 
             current_elements.append(element)
             current_word_count += word_count
@@ -61,6 +93,29 @@ class DocumentChunker:
         chunks = self._merge_short_heading_chunks(chunks)
 
         return chunks
+
+    def _get_overlap_elements(
+        self,
+        elements: list[DocumentElement],
+        overlap_words: int,
+    ) -> list[DocumentElement]:
+
+        if overlap_words <= 0:
+            return []
+
+        overlap_elements: list[DocumentElement] = []
+        overlap_count = 0
+
+        for element in reversed(elements):
+            word_count = len(element.text.split())
+
+            if overlap_count + word_count > overlap_words:
+                break
+
+            overlap_elements.insert(0, element)
+            overlap_count += word_count
+
+        return overlap_elements
 
     def _build_chunk(
         self,
