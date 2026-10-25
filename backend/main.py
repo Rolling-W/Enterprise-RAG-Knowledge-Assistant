@@ -11,9 +11,11 @@ from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
 
 try:
-    from .qdrant_schema import COLLECTION_NAME
+    from .qdrant_schema import COLLECTION_NAME, create_client
+    from .rag_service import ingest, search as retrieve
 except ImportError:
-    from qdrant_schema import COLLECTION_NAME
+    from qdrant_schema import COLLECTION_NAME, create_client
+    from rag_service import ingest, search as retrieve
 
 
 class ErrorResponse(BaseModel):
@@ -203,6 +205,14 @@ def require_upload_permission(
     return user
 
 
+def require_read_permission(
+    user: Annotated[AuthenticatedUser, Depends(require_user)],
+) -> AuthenticatedUser:
+    if "document:read" not in user.permissions:
+        raise HTTPException(status_code=403, detail="Document read permission required")
+    return user
+
+
 @app.get("/", include_in_schema=False)
 def read_root() -> dict[str, str]:
     return {"message": "Enterprise RAG API is running"}
@@ -241,12 +251,30 @@ async def upload_document(
     if file.content_type not in supported_types:
         raise HTTPException(status_code=400, detail="Only PDF, Markdown, and plain text files are supported")
     content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded document is empty")
+    document_id = f"doc_{uuid4().hex[:12]}"
+    try:
+        chunk_count = ingest(
+            create_client(),
+            document_id=document_id,
+            filename=file.filename or "unnamed",
+            content_type=file.content_type,
+            content=content,
+            department_id=user.department,
+            clearance_level=user.clearance,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Document storage is unavailable") from exc
     return UploadResponse(
-        document_id=f"doc_{uuid4().hex[:12]}",
+        document_id=document_id,
         filename=file.filename or "unnamed",
         content_type=file.content_type,
         size_bytes=len(content),
-        message=f"Document queued for {user.department} with clearance {user.clearance}",
+        status="indexed",
+        message=f"Indexed {chunk_count} chunks for {user.department} with clearance {user.clearance}",
     )
 
 
@@ -258,24 +286,48 @@ async def upload_document(
 )
 def search(
     payload: SearchRequest,
-    user: Annotated[AuthenticatedUser, Depends(require_user)],
+    user: Annotated[AuthenticatedUser, Depends(require_read_permission)],
 ) -> SearchResponse:
-    result = SearchResult(
-        chunk_id="chunk_001",
-        document_id="doc_001",
-        title="Employee_Handbook.pdf",
-        score=0.92,
-        content="Sample retrieved chunk text for internal enterprise policy and onboarding guidance.",
-        content_type="application/pdf",
-        department_id="General",
-        clearance_level=1,
-        citation=Citation(page=12, line_start=45, line_end=49),
-    )
-    results = [result] if user.clearance >= 1 else []
+    department_filter = payload.filters.get("department")
+    if department_filter and not user.role == "Executive" and department_filter not in {user.department, "Global"}:
+        raise HTTPException(status_code=403, detail="Department filter is outside your access scope")
+    try:
+        points = retrieve(
+            create_client(),
+            query=payload.query,
+            top_k=payload.top_k,
+            mode=payload.search_mode,
+            clearance_level=user.clearance,
+            department_id=user.department,
+            is_executive=user.role == "Executive",
+            department_filter=department_filter,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Search service is unavailable") from exc
+    results = []
+    for point in points:
+        data = point.payload or {}
+        results.append(
+            SearchResult(
+                chunk_id=str(data["chunk_id"]),
+                document_id=str(data["document_id"]),
+                title=str(data.get("title", "")),
+                score=min(max(float(point.score), 0.0), 1.0),
+                content=str(data.get("content", "")),
+                content_type=str(data.get("content_type", "text/plain")),
+                department_id=str(data["department_id"]),
+                clearance_level=int(data["clearance_level"]),
+                citation=Citation(
+                    page=data.get("page"),
+                    line_start=data.get("line_start"),
+                    line_end=data.get("line_end"),
+                ),
+            )
+        )
     return SearchResponse(
         query=payload.query,
         search_mode=payload.search_mode,
-        results=results[: payload.top_k],
+        results=results,
         total=len(results),
         request_id=f"req_{uuid4().hex[:12]}",
     )
