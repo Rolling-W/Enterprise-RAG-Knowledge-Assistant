@@ -67,7 +67,8 @@ Form fields:
 | --- | --- | --- | --- |
 | `file` | file | yes | PDF, Markdown, or plain text document |
 
-Response `202`:
+Response `202` (the document is parsed, chunked, embedded, and indexed before
+the response is returned):
 
 ```json
 {
@@ -75,8 +76,8 @@ Response `202`:
   "filename": "Employee_Handbook.pdf",
   "content_type": "application/pdf",
   "size_bytes": 18240,
-  "status": "queued",
-  "message": "Document queued for General with clearance 2"
+  "status": "indexed",
+  "message": "Indexed 3 chunks for General with clearance 2"
 }
 ```
 
@@ -112,10 +113,14 @@ Response `200`:
   "search_mode": "hybrid",
   "results": [
     {
-      "doc_id": "doc_001",
+      "document_id": "doc_001",
+      "chunk_id": "chunk_001",
       "title": "Employee_Handbook.pdf",
       "score": 0.92,
       "content": "Sample retrieved chunk text...",
+      "content_type": "application/pdf",
+      "department_id": "HR",
+      "clearance_level": 1,
       "citation": {
         "page": 12,
         "line_start": 45,

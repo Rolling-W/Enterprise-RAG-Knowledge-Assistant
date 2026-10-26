@@ -60,6 +60,13 @@ Once the stack is up:
 - Frontend UI: http://localhost:5173
 - Qdrant Dashboard: http://localhost:6333/dashboard
 
+Provision the Qdrant collection and RBAC payload indexes explicitly after
+Qdrant is running:
+
+```bash
+python -m backend.init_qdrant
+```
+
 ## 🔍 Sample API
 
 ```http

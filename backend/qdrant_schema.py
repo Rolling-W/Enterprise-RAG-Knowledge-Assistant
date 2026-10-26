@@ -1,17 +1,36 @@
-"""Qdrant collection and server-side RBAC filter definitions."""
+"""Qdrant collection schema and server-side RBAC filter definitions."""
+
+import os
 
 from qdrant_client import QdrantClient, models
 
 COLLECTION_NAME = "enterprise_documents"
 VECTOR_SIZE = 384
 VECTOR_DISTANCE = models.Distance.COSINE
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+
+PAYLOAD_SCHEMA = {
+    "document_id": models.PayloadSchemaType.KEYWORD,
+    "chunk_id": models.PayloadSchemaType.KEYWORD,
+    "department_id": models.PayloadSchemaType.KEYWORD,
+    "clearance_level": models.PayloadSchemaType.INTEGER,
+    "content_type": models.PayloadSchemaType.KEYWORD,
+    "title": models.PayloadSchemaType.KEYWORD,
+    "content": models.PayloadSchemaType.TEXT,
+    "page": models.PayloadSchemaType.INTEGER,
+    "line_start": models.PayloadSchemaType.INTEGER,
+    "line_end": models.PayloadSchemaType.INTEGER,
+}
 
 
-def access_filter(*, clearance: int, department: str, is_executive: bool = False) -> models.Filter:
+def access_filter(
+    *, clearance_level: int, department_id: str, is_executive: bool = False
+) -> models.Filter:
     """Return the payload filter that must run before vector search/ranking."""
     clearance_condition = models.FieldCondition(
-        key="min_clearance",
-        range=models.Range(lte=clearance),
+        key="clearance_level",
+        range=models.Range(lte=clearance_level),
     )
     if is_executive:
         return models.Filter(must=[clearance_condition])
@@ -20,15 +39,20 @@ def access_filter(*, clearance: int, department: str, is_executive: bool = False
         must=[clearance_condition],
         should=[
             models.FieldCondition(
-                key="department",
-                match=models.MatchValue(value=department),
+                key="department_id",
+                match=models.MatchValue(value=department_id),
             ),
             models.FieldCondition(
-                key="department",
+                key="department_id",
                 match=models.MatchValue(value="Global"),
             ),
         ],
     )
+
+
+def create_client() -> QdrantClient:
+    """Create a client using the configured local Qdrant endpoint."""
+    return QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 
 def ensure_collection(client: QdrantClient) -> None:
@@ -43,12 +67,7 @@ def ensure_collection(client: QdrantClient) -> None:
             ),
         )
 
-    for field_name, field_schema in (
-        ("document_id", models.PayloadSchemaType.KEYWORD),
-        ("department", models.PayloadSchemaType.KEYWORD),
-        ("min_clearance", models.PayloadSchemaType.INTEGER),
-        ("content_type", models.PayloadSchemaType.KEYWORD),
-    ):
+    for field_name, field_schema in PAYLOAD_SCHEMA.items():
         client.create_payload_index(
             collection_name=COLLECTION_NAME,
             field_name=field_name,
