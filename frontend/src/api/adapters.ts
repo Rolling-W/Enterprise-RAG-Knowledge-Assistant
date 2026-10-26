@@ -31,6 +31,7 @@ export function toAssistantResponse(
       id: result.chunk_id,
       document_id: result.document_id,
       title: result.title,
+      score: result.score,
       content: result.content,
       page: result.citation.page ?? undefined,
       line_start: result.citation.line_start ?? undefined,

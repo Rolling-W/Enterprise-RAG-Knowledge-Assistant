@@ -60,7 +60,9 @@ export function FileUpload({
       const response = await onUpload(file);
       if (alive.current) {
         setSuccess(
-          `${response.filename} was received.${trackProcessing ? " Track its processing status below." : ""}`,
+          response.status === "indexed"
+            ? `${response.filename} is indexed and ready to search. ${response.message}`
+            : `${response.filename} was received.${trackProcessing ? " Track its processing status below." : ""}`,
         );
         setFile(null);
         if (fileInput.current) fileInput.current.value = "";

@@ -40,6 +40,7 @@ function errorMessage(body: unknown): string {
 }
 
 export function createApiClient(options: ClientOptions) {
+  const unauthorizedListeners = new Set<(token: string) => void>();
   const baseUrl = (options.baseUrl ?? "http://localhost:8000").replace(
     /\/+$/,
     "",
@@ -71,6 +72,10 @@ export function createApiClient(options: ClientOptions) {
         0,
       );
     }
+    // Handle authentication before parsing: even a non-JSON 401 ends the session.
+    if (response.status === 401 && token) {
+      unauthorizedListeners.forEach((listener) => listener(token));
+    }
     if (response.status === 204) return undefined as T;
     let body: unknown;
     try {
@@ -88,6 +93,12 @@ export function createApiClient(options: ClientOptions) {
   }
   return {
     mode: options.mode,
+    onUnauthorized: (listener: (token: string) => void) => {
+      unauthorizedListeners.add(listener);
+      return () => {
+        unauthorizedListeners.delete(listener);
+      };
+    },
     login: async (username: string, password: string) =>
       toSession(
         await request<TokenResponse>("/api/v1/auth/login", {
@@ -164,7 +175,7 @@ export function createApiClient(options: ClientOptions) {
   };
 }
 
-const configuredMode = import.meta.env.VITE_API_MODE ?? "mock";
+const configuredMode = import.meta.env.VITE_API_MODE ?? "live";
 if (configuredMode !== "mock" && configuredMode !== "live")
   throw new Error("VITE_API_MODE must be mock or live.");
 export const api = createApiClient({

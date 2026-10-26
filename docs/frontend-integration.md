@@ -1,5 +1,48 @@
 # Frontend Sprint 2 integration notes
 
+## Current integration — October 26, 2026
+
+Backend commit `6399a19` from `ruolin/sprint2-architecture-qdrant` is merged into
+`yunting-dev`. The earlier October 14 assessment below is historical.
+
+- Frontend defaults to `live`; Docker Compose also sets `VITE_API_MODE=live`.
+  Set `VITE_API_MODE=mock` explicitly for the independent demo.
+- Upload returns `202` with `status: indexed` after synchronous ingestion.
+  The frontend displays indexing completion and the backend's chunk-count message.
+  `queued` remains supported for the asynchronous mock workflow.
+- Search shows the backend score as a raw decimal, and the selector sends
+  `keyword`, `semantic`, or `hybrid`. Retries retain the original mode.
+- All protected HTTP requests notify the auth store on 401, even for non-JSON
+  bodies. Only the matching token is invalidated; a delayed response for an old
+  session cannot clear a newer login. Login failures and 403 do not sign out.
+- Source cards use the document and chunk identifiers together as React keys,
+  since the integrated backend can reuse chunk identifiers across documents.
+- Document list/status and original-file preview endpoints remain unavailable.
+  Live citation drawers display the returned excerpt and coordinates.
+
+### Verification
+
+Run `npm run check` inside `frontend` for component/application integration tests,
+TypeScript and production build. These tests require no running backend.
+
+With backend dependencies and `httpx` installed, run from the repository root:
+
+```sh
+python -m unittest discover -s backend/tests -v
+```
+
+These tests run real FastAPI login, upload, parsing, indexing, all three retrieval
+modes, citation metadata and RBAC responses against isolated in-memory Qdrant.
+Only the Qdrant connection factory is replaced. They do not validate a Docker
+deployment or a networked Qdrant server, PDF viewer navigation, or retrieval quality.
+
+For a full deployment, run `docker compose up --build`, open
+`http://localhost:5173`, sign in as Manager, upload a Markdown/TXT file containing
+a unique phrase, then search it in each mode. Confirm the indexing success, score,
+content and source coordinates. The executable API contract is `/openapi.json`.
+
+## Historical assessment — October 14, 2026
+
 Reviewed October 14, 2026. Frontend remains Vite + React + TypeScript + SCSS.
 
 ## References and scope

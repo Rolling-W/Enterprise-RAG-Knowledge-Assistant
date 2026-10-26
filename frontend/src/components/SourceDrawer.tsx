@@ -110,7 +110,7 @@ export function SourceDrawer({
           {api.mode === "live" && citation && (
             <section className="evidence-block">
               <div className="evidence-heading">
-                {citationLocation(citation)}
+                {citationLocation(citation)} · Score {citation.score.toFixed(3)}
               </div>
               <p>{citation.content}</p>
             </section>
@@ -126,7 +126,7 @@ export function SourceDrawer({
                 <section className="evidence-block">
                   <div className="evidence-heading">
                     <Icon name="check" size={16} />
-                    {citationLocation(citation)}
+                    {citationLocation(citation)} · Score {citation.score.toFixed(3)}
                   </div>
                   <p>{citation.content}</p>
                 </section>

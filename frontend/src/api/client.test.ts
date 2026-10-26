@@ -49,6 +49,7 @@ describe("HTTP client and display adapters", () => {
     expect(display.answer).toBe(searchFixture.results[0].content);
     expect(display.citations[0]).toMatchObject({
       id: "chunk_001",
+      score: 0.92,
       document_id: "doc_001",
       page: 12,
       line_start: 45,
@@ -142,5 +143,33 @@ describe("HTTP client and display adapters", () => {
       ],
     });
     expect(citationLocation(result.citations[0])).toBe("Source excerpt");
+  });
+
+  it.each([true, false])("notifies on protected 401, including JSON=%s", async (json) => {
+    const client = createApiClient({
+      mode: "live",
+      fetchTransport: async () => json
+        ? response({ detail: "Expired token" }, 401)
+        : new Response("Unauthorized", { status: 401 }),
+    });
+    const listener = vi.fn();
+    const unsubscribe = client.onUnauthorized(listener);
+    await expect(client.search("leave", "expired-token")).rejects.toMatchObject({ status: 401 });
+    expect(listener).toHaveBeenCalledWith("expired-token");
+    unsubscribe();
+    await expect(client.search("leave", "expired-token")).rejects.toMatchObject({ status: 401 });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps login errors and forbidden requests out of session invalidation", async () => {
+    const transport = vi.fn()
+      .mockResolvedValueOnce(response({ detail: "Invalid credentials" }, 401))
+      .mockResolvedValueOnce(response({ detail: "Permission required" }, 403));
+    const client = createApiClient({ mode: "live", fetchTransport: transport });
+    const listener = vi.fn();
+    client.onUnauthorized(listener);
+    await expect(client.login("manager", "wrong")).rejects.toMatchObject({ status: 401 });
+    await expect(client.search("leave", "token")).rejects.toMatchObject({ status: 403 });
+    expect(listener).not.toHaveBeenCalled();
   });
 });

@@ -16,6 +16,13 @@ interface AuthValue {
 const AuthContext = createContext<AuthValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  useEffect(
+    () => api.onUnauthorized((token) => {
+      // A delayed response for an old login must not clear a newer session.
+      setSession((current) => current?.access_token === token ? null : current);
+    }),
+    [],
+  );
   useEffect(() => {
     if (!session) return;
     const timer = window.setTimeout(

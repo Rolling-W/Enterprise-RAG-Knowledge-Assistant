@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import type { SearchMode } from "../api/contracts";
 import { citationLocation, toAssistantResponse } from "../api/adapters";
 import { useAuth } from "../context/AuthContext";
 import { Icon } from "../components/Icon";
@@ -35,6 +36,7 @@ export function AssistantPage() {
   const { session } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
+  const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState<PreviewSelection | null>(null);
   const [copied, setCopied] = useState("");
@@ -54,7 +56,7 @@ export function AssistantPage() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, busy]);
-  async function ask(value: string) {
+  async function ask(value: string, mode: SearchMode = searchMode) {
     const query = value.trim();
     if (!query || busy || query.length > 500) return;
     const request = ++requestNumber.current;
@@ -66,7 +68,7 @@ export function AssistantPage() {
     setBusy(true);
     try {
       const response = toAssistantResponse(
-        await api.search(query, session!.access_token),
+        await api.search(query, session!.access_token, { search_mode: mode }),
       );
       if (request === requestNumber.current)
         setMessages((previous) => [
@@ -76,6 +78,7 @@ export function AssistantPage() {
             kind: "assistant",
             content: response.answer,
             citations: response.citations,
+            search_mode: mode,
           },
         ]);
     } catch (reason) {
@@ -86,6 +89,7 @@ export function AssistantPage() {
             id: crypto.randomUUID(),
             kind: "assistant",
             failed: true,
+            search_mode: mode,
             content:
               reason instanceof Error
                 ? reason.message
@@ -229,7 +233,7 @@ export function AssistantPage() {
                       {message.citations.map((citation, index) => (
                         <button
                           className="citation-card"
-                          key={citation.id}
+                          key={`${citation.document_id}:${citation.id}`}
                           onClick={() =>
                             setSelection({
                               documentId: citation.document_id,
@@ -241,6 +245,7 @@ export function AssistantPage() {
                           <div>
                             <strong>{citation.title}</strong>
                             <span>{citationLocation(citation)}</span>
+                            <span>Score {citation.score.toFixed(3)}</span>
                           </div>
                           <Icon name="chevron" size={16} />
                         </button>
@@ -272,7 +277,7 @@ export function AssistantPage() {
                           (item) => item.id === message.id,
                         );
                         const previous = messages[position - 1];
-                        if (previous) void ask(previous.content);
+                        if (previous) void ask(previous.content, message.search_mode);
                       }}
                       disabled={busy}
                     >
@@ -300,6 +305,19 @@ export function AssistantPage() {
         )}
       </div>
       <div className="composer-area">
+        <div className="search-controls">
+          <label htmlFor="search-mode">Search mode</label>
+          <select
+            id="search-mode"
+            value={searchMode}
+            onChange={(event) => setSearchMode(event.target.value as SearchMode)}
+            disabled={busy}
+          >
+            <option value="hybrid">Hybrid</option>
+            <option value="semantic">Semantic</option>
+            <option value="keyword">Keyword</option>
+          </select>
+        </div>
         {copyError && (
           <p className="notice error" role="alert">
             {copyError}

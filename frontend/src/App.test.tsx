@@ -9,19 +9,21 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { api, createApiClient } from "./api/client";
+import { api, ApiError, createApiClient } from "./api/client";
 import { createMockTransport } from "./mocks/handlers";
 import { searchFixture } from "./test/fixtures";
 import type { SearchResponse } from "./api/contracts";
 
 let mock: ReturnType<typeof createMockTransport>;
 beforeEach(() => {
+  api.mode = "mock";
   mock = createMockTransport({
     latencyMs: 0,
     searchLatencyMs: 0,
     processingMs: 20,
   });
   const client = createApiClient({ mode: "mock", mockTransport: mock.handler });
+  vi.spyOn(api, "onUnauthorized").mockImplementation(client.onUnauthorized);
   vi.spyOn(api, "login").mockImplementation(client.login);
   vi.spyOn(api, "logout").mockImplementation(client.logout);
   vi.spyOn(api, "search").mockImplementation(client.search);
@@ -42,6 +44,56 @@ async function signIn(role?: "Staff" | "Executive") {
 }
 
 describe("frontend independent workflows", () => {
+  it("shows a forbidden search error while keeping the user signed in", async () => {
+    await signIn();
+    vi.mocked(api.search).mockRejectedValueOnce(new ApiError("Department filter is outside your access scope", 403));
+    await userEvent.type(screen.getByRole("textbox", { name: "Ask a question about your documents" }), "annual leave");
+    await userEvent.click(screen.getByRole("button", { name: "Send question" }));
+    expect(await screen.findByText("Department filter is outside your access scope")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Knowledge assistant", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+  });
+  it.each(["search", "upload"])("redirects to login when %s returns 401", async (operation) => {
+    await signIn();
+    if (operation === "upload") {
+      await userEvent.click(screen.getByRole("link", { name: "Browse documents" }));
+      await screen.findByText("Employee_Handbook.pdf");
+      await userEvent.upload(screen.getByLabelText("Choose a document"), new File(["policy"], "policy.md"));
+      mock.reset();
+      await userEvent.click(screen.getByRole("button", { name: "Upload document" }));
+    } else {
+      mock.reset();
+      await userEvent.type(screen.getByRole("textbox", { name: "Ask a question about your documents" }), "annual leave");
+      await userEvent.click(screen.getByRole("button", { name: "Send question" }));
+    }
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/login");
+    expect(api.logout).not.toHaveBeenCalled();
+  });
+
+  it.each(["keyword", "semantic", "hybrid"] as const)("sends selected %s mode and displays scores", async (mode) => {
+    await signIn();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Search mode" }), mode);
+    await userEvent.type(screen.getByRole("textbox", { name: "Ask a question about your documents" }), "annual leave");
+    await userEvent.click(screen.getByRole("button", { name: "Send question" }));
+    const source = await screen.findByRole("button", { name: /Employee_Handbook.pdf/ });
+    expect(api.search).toHaveBeenCalledWith("annual leave", expect.any(String), { search_mode: mode });
+    expect(source).toHaveTextContent(/Score \d\.\d{3}/);
+  });
+
+  it("retains the original mode on retry after the selector changes", async () => {
+    await signIn();
+    mock.next("/api/v1/search", "server-error");
+    const selector = screen.getByRole("combobox", { name: "Search mode" });
+    await userEvent.selectOptions(selector, "keyword");
+    await userEvent.type(screen.getByRole("textbox", { name: "Ask a question about your documents" }), "annual leave");
+    await userEvent.click(screen.getByRole("button", { name: "Send question" }));
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    await userEvent.selectOptions(selector, "semantic");
+    await userEvent.click(retry);
+    await screen.findByRole("button", { name: /Employee_Handbook.pdf/ });
+    expect(api.search).toHaveBeenLastCalledWith("annual leave", expect.any(String), { search_mode: "keyword" });
+  });
   it("protects routes, shows login errors, and supports navigation and logout", async () => {
     window.location.hash = "#/documents";
     render(<App />);
@@ -172,6 +224,7 @@ describe("frontend independent workflows", () => {
     await userEvent.type(input, "annual leave");
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
     expect(input).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Search mode" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Send question" }),
     ).toBeDisabled();

@@ -1,6 +1,7 @@
-// HTTP DTOs based on architecture branch 5f4b950 (2026-10-10).
+// HTTP DTOs aligned with backend integration commit 6399a19.
 // Keep display models in types.ts; do not add UI fields to these responses.
 export type Role = "Standard Staff" | "Department Manager" | "Executive";
+export type SearchMode = "hybrid" | "semantic" | "keyword";
 export interface UserSummary {
   user_id: string;
   username: string;
@@ -19,13 +20,13 @@ export interface UploadResponse {
   filename: string;
   content_type: string;
   size_bytes: number;
-  status: "queued";
+  status: "queued" | "indexed";
   message: string;
 }
 export interface SearchRequest {
   query: string;
   top_k?: number;
-  search_mode?: "hybrid" | "semantic" | "keyword";
+  search_mode?: SearchMode;
   filters?: Record<string, string>;
 }
 export interface SourceLocation {
@@ -46,7 +47,7 @@ export interface SearchResult {
 }
 export interface SearchResponse {
   query: string;
-  search_mode: "hybrid" | "semantic" | "keyword";
+  search_mode: SearchMode;
   results: SearchResult[];
   total: number;
   request_id: string;

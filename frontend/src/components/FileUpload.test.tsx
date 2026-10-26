@@ -6,6 +6,17 @@ import { uploadFixture } from "../test/fixtures";
 import { MAX_FILE_BYTES } from "../uploadPolicy";
 
 describe("FileUpload", () => {
+  it("shows indexed completion from the real upload contract without suggesting pending processing", async () => {
+    const indexed = { ...uploadFixture, status: "indexed" as const, message: "Indexed 3 chunks for General with clearance 2" };
+    const onUploaded = vi.fn();
+    render(<FileUpload onUpload={vi.fn().mockResolvedValue(indexed)} onUploaded={onUploaded} trackProcessing={false} />);
+    await userEvent.upload(screen.getByLabelText("Choose a document"), new File(["policy"], "policy.md"));
+    await userEvent.click(screen.getByRole("button", { name: "Upload document" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("policy.md is indexed and ready to search");
+    expect(screen.getByRole("status")).toHaveTextContent("Indexed 3 chunks");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Track its processing");
+    expect(onUploaded).toHaveBeenCalledWith(indexed);
+  });
   it.each(["policy.pdf", "policy.md", "policy.txt"])(
     "selects and uploads %s",
     async (name) => {

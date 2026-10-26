@@ -1,4 +1,4 @@
-import type { TokenResponse, UserSummary } from "./api/contracts";
+import type { SearchMode, TokenResponse, UserSummary } from "./api/contracts";
 export type { Role } from "./api/contracts";
 export interface User extends UserSummary {
   name: string;
@@ -24,6 +24,7 @@ export interface Citation {
   id: string;
   document_id: string;
   title: string;
+  score: number;
   page?: number;
   line_start?: number;
   line_end?: number;
@@ -41,6 +42,7 @@ export interface Message {
   content: string;
   citations?: Citation[];
   failed?: boolean;
+  search_mode?: SearchMode;
 }
 export interface PreviewSelection {
   documentId: string;

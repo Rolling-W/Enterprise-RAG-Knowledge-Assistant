@@ -1,6 +1,6 @@
 # Enterprise RAG frontend
 
-A capstone frontend built with React, TypeScript, Vite, and SCSS. Mock mode is the default and runs without the backend, Qdrant, or an LLM service. SCSS and the existing navigation/layout are retained.
+A capstone frontend built with React, TypeScript, Vite, and SCSS. Live API mode is the default and uses the merged FastAPI backend and Qdrant. An explicit mock mode is available for independent UI demos and tests.
 
 ## Run locally
 
@@ -26,11 +26,11 @@ Tests cover the HTTP contract, JSON/Bearer headers, multipart MIME handling, val
 
 ## Mock and live API modes
 
-Copy `.env.example` to `.env.local`. Set `VITE_API_MODE=mock` (default) or `VITE_API_MODE=live`, and set `VITE_API_BASE_URL` for live requests. Restart Vite after changing these values.
+Copy `.env.example` to `.env.local`. Set `VITE_API_MODE=live` (default) or explicitly choose `VITE_API_MODE=mock`, and set `VITE_API_BASE_URL` for live requests. Restart Vite after changing these values. An existing `.env.local` with `mock` still overrides the default. Docker Compose explicitly uses live mode.
 
-The HTTP types reference architecture commit `5f4b950` on `ruolin/sprint2-architecture-qdrant`, reviewed on October 14, 2026. That contract is not yet merged into `main`; run a backend exposing that response shape when testing live mode. See [frontend integration notes](../docs/frontend-integration.md) for pending endpoints and contract differences.
+The backend branch through commit `6399a19` has been merged into `yunting-dev`. Login returns a signed JWT; upload parses and indexes documents before returning `202` with `status: indexed`; search returns real indexed excerpts, scores, and citation coordinates. See [frontend integration notes](../docs/frontend-integration.md) for verification and remaining API boundaries.
 
-Live mode supports login, upload, and retrieval through real `fetch` requests. The document library is unavailable until the backend supplies list/status endpoints. Clicking a live search citation shows its returned excerpt and available location metadata. Live logout clears the local session without calling an unimplemented logout endpoint. Live failures never fall back to mock data.
+Live mode supports login, upload, and retrieval through real `fetch` requests. The search selector supports hybrid, semantic, and keyword requests, and each source shows its raw retrieval score. Retrying preserves the failed request's mode. Protected 401 responses clear the matching session and redirect to login; 403 errors keep the session and display the backend message. Upload completion distinguishes indexed documents from queued uploads. The document library is unavailable until the backend supplies list/status endpoints. Clicking a live search citation shows its returned excerpt, location metadata, and score. Live logout clears the local session. Live failures never fall back to mock data.
 
 ## Pages
 
@@ -38,13 +38,13 @@ Live mode supports login, upload, and retrieval through real `fetch` requests. T
 - `/#/assistant`: questions, retrieved excerpts, citations, copy, empty and error states.
 - `/#/documents`: file selection/drop, mock processing, document search, and source previews.
 
-Routes use HashRouter so the built app can also work on static hosting without route rewrites. Login and data are in memory. Refreshing resets the demo; switching pages preserves uploaded documents, but starting a new assistant page resets its conversation.
+Routes use HashRouter so the built app can work on static hosting without route rewrites. Login and conversation state are in browser memory; refreshing requires signing in again. Live uploads remain in Qdrant. Mock documents reset on refresh. Starting a new assistant page resets its conversation.
 
 ## Development test accounts
 
 The interface uses regular product language and does not display mock badges. The sign-in page pre-fills the manager account and password, and Staff / Manager / Executive shortcuts fill the corresponding credentials without automatically signing in. These accounts are for local development only.
 
-All accounts use password **demo123**.
+Mock accounts use password **demo123**. The development backend accepts non-empty passwords; it is not a production identity provider.
 
 | Email                      | Role               | Accessible sample documents |
 | -------------------------- | ------------------ | --------------------------- |

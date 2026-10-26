@@ -1189,6 +1189,31 @@ textarea::placeholder {
   padding: 10px 0 20px;
 }
 
+.search-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #526d98;
+  font-size: 13px;
+
+  select {
+    border: 1px solid #d8e1ee;
+    border-radius: 7px;
+    background: white;
+    color: inherit;
+    font: inherit;
+    padding: 7px 10px;
+
+    &:focus-visible {
+      outline: 2px solid $blue;
+      outline-offset: 2px;
+    }
+  }
+}
+
 .composer {
   background: white;
   border: 1px solid #d8e1ee;
