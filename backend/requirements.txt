@@ -8,3 +8,4 @@ python-multipart
 PyJWT>=2.8.0
 unstructured[pdf]
 markdown>=3.5
+pypdf>=5.0.0
