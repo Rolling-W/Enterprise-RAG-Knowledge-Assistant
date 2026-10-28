@@ -91,5 +91,358 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertIn("score", spec["components"]["schemas"]["SearchResult"]["properties"])
 
 
+    def test_multi_document_hybrid_retrieval(self):
+        headers = self.login()
+
+        documents = [
+            (
+                "leave-policy.md",
+                b"# Leave Policy\nEmployees receive 23 days of annual leave.",
+            ),
+            (
+                "warehouse-policy.md",
+                b"# Warehouse Operations\nInventory is checked every Monday.",
+            ),
+            (
+                "security-policy.md",
+                b"# Security Policy\nAll employees must use multi-factor authentication.",
+            ),
+        ]
+
+        for filename, content in documents:
+            response = self.client.post(
+                "/api/v1/upload",
+                headers=headers,
+                files={
+                    "file": (
+                        filename,
+                        content,
+                        "text/markdown",
+                    )
+                },
+            )
+
+            self.assertEqual(
+                response.status_code,
+                202,
+                response.text,
+            )
+
+        response = self.client.post(
+            "/api/v1/search",
+            headers=headers,
+            json={
+                "query": "How many vacation days do employees receive?",
+                "search_mode": "hybrid",
+                "top_k": 3,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        results = response.json()["results"]
+
+        self.assertGreater(len(results), 0)
+        self.assertEqual(
+            results[0]["title"],
+            "leave-policy.md",
+        )
+        self.assertIn(
+            "23 days",
+            results[0]["content"],
+        )
+
+        print("\nHybrid search ranking:")
+        for result in results:
+            print(
+                result["title"],
+                "score=",
+                round(result["score"], 4),
+            )
+
+
+    def test_txt_upload_and_citation(self):
+        headers = self.login()
+
+        response = self.client.post(
+            "/api/v1/upload",
+            headers=headers,
+            files={
+                "file": (
+                    "employee-handbook.txt",
+                    b"Employee Handbook\n"
+                    b"All employees must complete safety training.\n"
+                    b"Training is required every year.",
+                    "text/plain",
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+
+        response = self.client.post(
+            "/api/v1/search",
+            headers=headers,
+            json={
+                "query": "safety training",
+                "search_mode": "hybrid",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        results = response.json()["results"]
+
+        self.assertGreater(len(results), 0)
+
+        result = results[0]
+
+        self.assertEqual(
+            result["title"],
+            "employee-handbook.txt",
+        )
+
+        self.assertEqual(
+            result["citation"],
+            {
+                "page": None,
+                "line_start": 1,
+                "line_end": 3,
+            },
+        )
+
+        print("\nTXT Citation:", result["citation"])
+
+
+    def test_pdf_upload_and_citation(self):
+        from pathlib import Path
+
+        headers = self.login()
+
+        pdf_path = Path("sample_data/project_charter.pdf")
+        pdf_content = pdf_path.read_bytes()
+
+        response = self.client.post(
+            "/api/v1/upload",
+            headers=headers,
+            files={
+                "file": (
+                    pdf_path.name,
+                    pdf_content,
+                    "application/pdf",
+                )
+            },
+        )
+
+        self.assertEqual(
+            response.status_code,
+            202,
+            response.text,
+        )
+
+        print("\nPDF Upload:", response.json())
+
+        response = self.client.post(
+            "/api/v1/search",
+            headers=headers,
+            json={
+                "query": "Enterprise RAG Knowledge Assistant",
+                "search_mode": "hybrid",
+                "top_k": 3,
+            },
+        )
+
+        self.assertEqual(
+            response.status_code,
+            200,
+            response.text,
+        )
+
+        results = response.json()["results"]
+
+        self.assertGreater(len(results), 0)
+
+        print("\nPDF Search Results:")
+        for result in results:
+            print({
+                "title": result["title"],
+                "score": round(result["score"], 4),
+                "citation": result["citation"],
+                "content": result["content"][:120],
+            })
+
+        self.assertEqual(
+            results[0]["title"],
+            "project_charter.pdf",
+        )
+
+        self.assertIsNotNone(
+            results[0]["citation"]["page"],
+        )
+
+        self.assertIsNone(
+            results[0]["citation"]["line_start"],
+        )
+
+        self.assertIsNone(
+            results[0]["citation"]["line_end"],
+        )
+
+
+    def test_staff_handbook_pdf_retrieval(self):
+        from pathlib import Path
+
+        headers = self.login()
+        pdf_path = Path("sample_data/staff_handbook_sample.pdf")
+
+        response = self.client.post(
+            "/api/v1/upload",
+            headers=headers,
+            files={
+                "file": (
+                    pdf_path.name,
+                    pdf_path.read_bytes(),
+                    "application/pdf",
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        print("\nStaff Handbook Upload:", response.json())
+
+        response = self.client.post(
+            "/api/v1/search",
+            headers=headers,
+            json={
+                "query": "employee handbook policies",
+                "search_mode": "hybrid",
+                "top_k": 5,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        results = response.json()["results"]
+        self.assertGreater(len(results), 0)
+
+        print("\nStaff Handbook Search Results:")
+        for result in results:
+            print({
+                "title": result["title"],
+                "score": round(result["score"], 4),
+                "citation": result["citation"],
+                "content": result["content"][:150],
+            })
+
+        self.assertEqual(
+            results[0]["title"],
+            "staff_handbook_sample.pdf",
+        )
+
+        self.assertIsNotNone(
+            results[0]["citation"]["page"],
+        )
+
+        self.assertIsNone(
+            results[0]["citation"]["line_start"],
+        )
+        self.assertIsNone(
+            results[0]["citation"]["line_end"],
+        )
+
+
+    def test_cross_document_hybrid_retrieval(self):
+        from pathlib import Path
+
+        headers = self.login()
+
+        filenames = [
+            "project_charter.pdf",
+            "staff_handbook_sample.pdf",
+            "annual_report_apple2025.pdf",
+        ]
+
+        for filename in filenames:
+            path = Path("sample_data") / filename
+
+            response = self.client.post(
+                "/api/v1/upload",
+                headers=headers,
+                files={
+                    "file": (
+                        filename,
+                        path.read_bytes(),
+                        "application/pdf",
+                    )
+                },
+            )
+
+            self.assertEqual(
+                response.status_code,
+                202,
+                response.text,
+            )
+
+            print("Indexed:", filename, response.json()["message"])
+
+        queries = [
+            (
+                "What is the purpose of the Enterprise RAG Knowledge Assistant?",
+                "project_charter.pdf",
+            ),
+            (
+                "What is the purpose of the employee handbook?",
+                "staff_handbook_sample.pdf",
+            ),
+            (
+                "What was Apple's total net sales in fiscal 2025?",
+                "annual_report_apple2025.pdf",
+            ),
+        ]
+
+        correct = 0
+
+        for query, expected_filename in queries:
+            response = self.client.post(
+                "/api/v1/search",
+                headers=headers,
+                json={
+                    "query": query,
+                    "search_mode": "hybrid",
+                    "top_k": 5,
+                },
+            )
+
+            self.assertEqual(
+                response.status_code,
+                200,
+                response.text,
+            )
+
+            results = response.json()["results"]
+            self.assertGreater(len(results), 0)
+
+            top_result = results[0]
+            actual_filename = top_result["title"]
+
+            matched = actual_filename == expected_filename
+            correct += int(matched)
+
+            print("\nQuery:", query)
+            print("Expected:", expected_filename)
+            print("Top result:", actual_filename)
+            print("Citation:", top_result["citation"])
+            print("Matched:", matched)
+
+        accuracy = correct / len(queries)
+
+        print(
+            f"\nTop-1 Document Accuracy: "
+            f"{correct}/{len(queries)} ({accuracy:.0%})"
+        )
+
+        self.assertEqual(correct, len(queries))
+
+
 if __name__ == "__main__":
     unittest.main()

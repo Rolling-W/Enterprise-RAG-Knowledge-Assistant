@@ -4,7 +4,10 @@ import os
 
 from qdrant_client import QdrantClient, models
 
-COLLECTION_NAME = "enterprise_documents"
+COLLECTION_NAME = os.getenv(
+    "QDRANT_COLLECTION",
+    "enterprise_documents",
+)
 VECTOR_SIZE = 384
 VECTOR_DISTANCE = models.Distance.COSINE
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")

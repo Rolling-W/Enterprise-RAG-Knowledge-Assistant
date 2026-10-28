@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from unstructured.partition.pdf import partition_pdf
 
@@ -68,7 +68,12 @@ class UnstructuredPDFParser(PDFParser):
                 )
 
             document_element = DocumentElement(
-                element_id=str(uuid4()),
+                element_id=str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"{source_file}:{page_number}:{sequence}:{text.strip()}",
+                    )
+                ),
                 text=text.strip(),
                 element_type=type(element).__name__,
                 source_file=source_file,

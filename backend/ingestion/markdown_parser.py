@@ -1,9 +1,11 @@
 from pathlib import Path
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from unstructured.partition.md import partition_md
 
 from backend.ingestion.models import DocumentElement
+
+from backend.ingestion.markdown_line_mapper import map_markdown_lines
 
 
 class MarkdownParser:
@@ -25,7 +27,12 @@ class MarkdownParser:
                 continue
 
             document_element = DocumentElement(
-                element_id=str(uuid4()),
+                element_id=str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"{source_file}:{sequence}:{text.strip()}",
+                    )
+                ),
                 text=text.strip(),
                 element_type=type(element).__name__,
                 source_file=source_file,
@@ -35,5 +42,8 @@ class MarkdownParser:
             )
 
             elements.append(document_element)
+
+        source_text = Path(file_path).read_text(encoding="utf-8-sig")
+        map_markdown_lines(elements, source_text)
 
         return elements

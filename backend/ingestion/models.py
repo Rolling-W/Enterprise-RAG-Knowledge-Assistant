@@ -11,6 +11,8 @@ class DocumentElement:
     page_number: int
     sequence: int
     bbox: Optional[tuple[float, float, float, float]] = None
+    line_start: Optional[int] = None
+    line_end: Optional[int] = None
 
 
 @dataclass

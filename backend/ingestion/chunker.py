@@ -2,7 +2,8 @@ import re
 from uuid import NAMESPACE_URL, uuid5
 
 from backend.ingestion.models import DocumentChunk, DocumentElement
-
+from backend.ingestion.text_utils import count_text_units
+from backend.ingestion.element_splitter import split_oversized_element
 
 class DocumentChunker:
     def chunk(
@@ -31,8 +32,15 @@ class DocumentChunker:
         current_elements: list[DocumentElement] = []
         current_word_count = 0
 
+        prepared_elements = []
+
         for element in elements:
-            word_count = len(element.text.split())
+            prepared_elements.extend(
+                split_oversized_element(element, max_words)
+            )
+
+        for element in prepared_elements:
+            word_count = count_text_units(element.text)
 
             size_exceeded = (
                 current_elements
@@ -69,11 +77,11 @@ class DocumentChunker:
 
                 current_elements = self._get_overlap_elements(
                     current_elements,
-                    overlap_words,
+                    min(overlap_words, max_words - word_count),
                 )
 
                 current_word_count = sum(
-                    len(overlap_element.text.split())
+                    count_text_units(overlap_element.text)
                     for overlap_element in current_elements
                 )
 
@@ -90,7 +98,10 @@ class DocumentChunker:
                 )
             )
 
-        chunks = self._merge_short_heading_chunks(chunks)
+        chunks = self._merge_short_heading_chunks(
+            chunks,
+            max_words=max_words,
+        )
 
         return chunks
 
@@ -107,7 +118,7 @@ class DocumentChunker:
         overlap_count = 0
 
         for element in reversed(elements):
-            word_count = len(element.text.split())
+            word_count = count_text_units(element.text)
 
             if overlap_count + word_count > overlap_words:
                 break
@@ -129,6 +140,43 @@ class DocumentChunker:
             element.text for element in elements
         )
 
+        title_elements = [
+            element
+            for element in elements
+            if element.element_type == "Title"
+        ]
+
+        title = title_elements[0].text if title_elements else ""
+
+        element_types = {
+            element.element_type
+            for element in elements
+        }
+
+        if element_types == {"Table"}:
+            content_type = "table"
+        else:
+            content_type = "text"
+
+        line_starts = [
+            element.line_start
+            for element in elements
+            if element.line_start is not None
+        ]
+
+        line_ends = [
+            element.line_end
+            for element in elements
+            if element.line_end is not None
+        ]
+
+        has_complete_line_metadata = all(
+            element.line_start is not None
+            and element.line_end is not None
+            and element.line_start <= element.line_end
+            for element in elements
+        )
+
         return DocumentChunk(
             chunk_id=self._make_chunk_id(
                 document_id=document_id,
@@ -142,9 +190,9 @@ class DocumentChunker:
                 content=content,
             ),
             document_id=document_id,
-            title="",
+            title=title,
             content=content,
-            content_type="text",
+            content_type=content_type,
             source_file=elements[0].source_file,
             page_start=min(
                 element.page_number for element in elements
@@ -157,6 +205,8 @@ class DocumentChunker:
             ],
             department=department,
             min_clearance=min_clearance,
+            line_start=min(line_starts) if has_complete_line_metadata else None,
+            line_end=max(line_ends) if has_complete_line_metadata else None,
         )
 
     def _is_section_heading(
@@ -165,6 +215,9 @@ class DocumentChunker:
     ) -> bool:
         if element.element_type != "Title":
             return False
+
+        if element.source_file.lower().endswith((".md", ".markdown")):
+            return True
 
         text = element.text.strip()
 
@@ -192,6 +245,7 @@ class DocumentChunker:
     def _merge_short_heading_chunks(
         self,
         chunks: list[DocumentChunk],
+        max_words: int = 400,
         max_heading_words: int = 10,
     ) -> list[DocumentChunk]:
 
@@ -214,16 +268,33 @@ class DocumentChunker:
                 )
             )
 
-            if (
+            can_merge = (
                 is_short_heading
                 and i + 1 < len(chunks)
-            ):
+                and (
+                    count_text_units(current.content)
+                    + count_text_units(chunks[i + 1].content)
+                    <= max_words
+                )
+            )
+
+            if can_merge:
                 next_chunk = chunks[i + 1]
 
                 combined_content = (
                     current.content.strip()
                     + "\n\n"
                     + next_chunk.content
+                )
+
+                has_complete_line_metadata = all(
+                    value is not None
+                    for value in (
+                        current.line_start,
+                        current.line_end,
+                        next_chunk.line_start,
+                        next_chunk.line_end,
+                    )
                 )
 
                 combined = DocumentChunk(
@@ -247,8 +318,16 @@ class DocumentChunker:
                     ),
                     department=current.department,
                     min_clearance=current.min_clearance,
-                    line_start=current.line_start,
-                    line_end=next_chunk.line_end,
+                    line_start=(
+                        min(current.line_start, next_chunk.line_start)
+                        if has_complete_line_metadata
+                        else None
+                    ),
+                    line_end=(
+                        max(current.line_end, next_chunk.line_end)
+                        if has_complete_line_metadata
+                        else None
+                    ),
                 )
 
                 merged.append(combined)
