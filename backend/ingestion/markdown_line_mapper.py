@@ -18,6 +18,9 @@ def map_markdown_lines(
         candidates = []
 
         for start_index in range(last_matched_line, len(source_lines)):
+            if not source_lines[start_index].strip():
+                continue
+
             combined_lines = []
 
             for end_index in range(start_index, len(source_lines)):
