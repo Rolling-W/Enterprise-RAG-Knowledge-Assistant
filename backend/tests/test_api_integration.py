@@ -76,9 +76,28 @@ class ApiIntegrationTests(unittest.TestCase):
         self.upload(manager)
         forbidden = self.client.post("/api/v1/search", headers=manager, json={"query": "leave", "filters": {"department": "HR"}})
         self.assertEqual(forbidden.status_code, 403)
-        response = self.client.post("/api/v1/search", headers=staff, json={"query": "leave"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["results"], [])
+
+        for mode in ("keyword", "semantic", "hybrid"):
+            with self.subTest(mode=mode):
+                response = self.client.post(
+                    "/api/v1/search",
+                    headers=staff,
+                    json={
+                        "query": "leave",
+                        "search_mode": mode,
+                    },
+                )
+
+                self.assertEqual(
+                    response.status_code,
+                    200,
+                    response.text,
+                )
+                self.assertEqual(
+                    response.json()["results"],
+                    [],
+                )
+
 
     def test_empty_upload_and_openapi_contract(self):
         response = self.client.post("/api/v1/upload", headers=self.login(), files={"file": ("empty.txt", b"", "text/plain")})
