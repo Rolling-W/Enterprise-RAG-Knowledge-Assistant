@@ -1,0 +1,4 @@
+Enterprise RAG System
+This is a test document.
+
+Access control is required.
