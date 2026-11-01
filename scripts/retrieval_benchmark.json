@@ -1,0 +1,88 @@
+
+{
+    "dataset_name": "Enterprise RAG Retrieval Benchmark v1",
+    "description": "Ground-truth evaluation questions for retrieval accuracy and latency.",
+    "questions": [
+      {
+        "id": "H01",
+        "query": "What is the University's smoking and vaping policy?",
+        "source": "staff_handbook_UIndy.pdf",
+        "expected_chunk_ids": [
+          "dac6b6a1-8199-5741-8d35-096dabdd6856"
+        ]
+      },
+      {
+        "id": "C01",
+        "query": "What is the project's budget cap?",
+        "source": "project_charter.pdf",
+        "expected_chunk_ids": [
+          "6ddbb0b0-f4da-541c-b453-b38e6890ad12"
+        ]
+      },
+      {
+        "id": "H02",
+        "query": "Where are employees and visitors allowed to use tobacco products on university premises?",
+        "source": "staff_handbook_UIndy.pdf",
+        "expected_chunk_ids": [
+        "dac6b6a1-8199-5741-8d35-096dabdd6856"
+        ]
+      },
+    {
+        "id": "H03",
+        "query": "Can I smoke in my car while parked on campus?",
+        "source": "staff_handbook_UIndy.pdf",
+        "expected_chunk_ids": [
+        "dac6b6a1-8199-5741-8d35-096dabdd6856"
+        ]
+    },
+    {
+        "id": "H04",
+        "query": "How many weeks of unpaid family and medical leave can eligible employees take in a 12-month period?",
+        "source": "staff_handbook_UIndy.pdf",
+        "expected_chunk_ids": [
+        "09e4d8c8-6af2-524c-8b45-121a5299a2a1"
+        ]
+    },
+    {
+        "id": "H05",
+        "query": "How many hours must an employee actually work in a week before overtime may apply?",
+        "source": "staff_handbook_UIndy.pdf",
+        "expected_chunk_ids": [
+        "26485951-1f3b-55eb-b27c-89011fee7893"
+        ]
+    },
+    {
+        "id": "C02",
+        "query": "What features or capabilities are explicitly excluded from the project's scope?",
+        "source": "project_charter.pdf",
+        "expected_chunk_ids": [
+        "b76397b7-5cf5-5076-8844-a73c0c5ac86a"
+        ]
+    },
+    {
+        "id": "C03",
+        "query": "What development methodology does the project follow?",
+        "source": "project_charter.pdf",
+        "expected_chunk_ids": [
+        "39c9762f-1b61-5079-a836-1ecfd3a33bc9"
+        ]
+    },
+    {
+        "id": "H06",
+        "query": "How many paid bereavement leave days can regular full-time employees receive after an immediate family member dies?",
+        "source": "staff_handbook_UIndy.pdf",
+        "expected_chunk_ids": [
+        "80754b63-ffd5-5dff-9af0-2954da7e1d6a"
+        ]
+    },
+    {
+        "id": "C04",
+        "query": "What is the primary goal of the Enterprise RAG Knowledge Assistant?",
+        "source": "project_charter.pdf",
+        "expected_chunk_ids": [
+        "4d65114f-1739-5668-b7e5-1eee0f18fd4a"
+        ]
+    }
+    ]
+  }
+  

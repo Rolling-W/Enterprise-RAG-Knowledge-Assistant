@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 venv/
 .venv/
+.venv-marker/
 .env
 .env.*
 !frontend/.env.example
@@ -27,3 +28,5 @@ Thumbs.db
 .coverage
 .pytest_cache/
 htmlcov/
+
+# Local Test Documents

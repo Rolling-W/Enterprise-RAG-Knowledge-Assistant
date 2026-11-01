@@ -9,6 +9,12 @@ from pathlib import PurePath
 from uuid import NAMESPACE_URL, uuid5
 
 from qdrant_client import QdrantClient, models
+from functools import lru_cache
+from sentence_transformers import SentenceTransformer
+
+from backend.ingestion.upload_adapter import parse_uploaded_document
+from backend.retrieval.bm25 import BM25Retriever
+from backend.retrieval.qdrant_mapper import payload_to_chunk
 
 try:
     from .qdrant_schema import COLLECTION_NAME, VECTOR_SIZE, access_filter, ensure_collection
@@ -25,16 +31,24 @@ class IngestedChunk:
     line_end: int | None
 
 
+
+@lru_cache(maxsize=1)
+def _embedding_model() -> SentenceTransformer:
+    """Load the embedding model once per Python process."""
+    return SentenceTransformer(
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+
 def _vector(text: str) -> list[float]:
-    """Create a stable local embedding without requiring a model download."""
-    values = [0.0] * VECTOR_SIZE
-    tokens = re.findall(r"\w+", text.lower())
-    for token in tokens:
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        index = int.from_bytes(digest[:4], "big") % VECTOR_SIZE
-        values[index] += 1.0
-    magnitude = sum(value * value for value in values) ** 0.5
-    return [value / magnitude for value in values] if magnitude else values
+    """Generate a 384-dimensional semantic embedding."""
+    embedding = _embedding_model().encode(
+        text,
+        normalize_embeddings=True,
+    )
+
+    return embedding.tolist()
+
 
 
 def _text_chunks(text: str, document_id: str, chunk_size: int = 1200) -> list[IngestedChunk]:
@@ -102,6 +116,7 @@ def parse_document(filename: str, content_type: str, content: bytes) -> list[Ing
     return _text_chunks(text, "document")
 
 
+
 def ingest(
     client: QdrantClient,
     *,
@@ -113,26 +128,57 @@ def ingest(
     clearance_level: int,
 ) -> int:
     ensure_collection(client)
-    chunks = parse_document(filename, content_type, content)
+
+    chunks = parse_uploaded_document(
+        filename=filename,
+        content=content,
+        document_id=document_id,
+        department=department_id,
+        min_clearance=clearance_level,
+    )
+
+    is_pdf = PurePath(filename).suffix.lower() == ".pdf"
+
     points = []
+
     for chunk in chunks:
-        point_id = str(uuid5(NAMESPACE_URL, f"{document_id}:{chunk.chunk_id}"))
+        point_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"{document_id}:{chunk.chunk_id}",
+            )
+        )
+
         payload = {
             "document_id": document_id,
             "chunk_id": chunk.chunk_id,
-            "department_id": department_id,
-            "clearance_level": clearance_level,
+            "department_id": chunk.department,
+            "clearance_level": chunk.min_clearance,
             "content_type": content_type,
             "title": filename,
             "content": chunk.content,
-            "page": chunk.page,
+            "page": chunk.page_start if is_pdf else None,
             "line_start": chunk.line_start,
             "line_end": chunk.line_end,
         }
-        points.append(models.PointStruct(id=point_id, vector=_vector(chunk.content), payload=payload))
+
+        points.append(
+            models.PointStruct(
+                id=point_id,
+                vector=_vector(chunk.content),
+                payload=payload,
+            )
+        )
+
     if points:
-        client.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
+        client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=points,
+            wait=True,
+        )
+
     return len(points)
+
 
 
 def search(
@@ -171,40 +217,117 @@ def search(
     semantic = semantic_response.points
     if mode == "semantic":
         return semantic
-    keyword = _keyword_search(client, query, top_k, query_filter)
-    by_id = {str(point.id): point for point in semantic}
-    for point in keyword:
-        existing = by_id.get(str(point.id))
-        if existing is None:
-            by_id[str(point.id)] = point
-        else:
-            existing.score = (existing.score + point.score) / 2
-    return sorted(by_id.values(), key=lambda point: point.score, reverse=True)[:top_k]
+
+    # Hybrid Search: Reciprocal Rank Fusion (RRF)
+    keyword = _keyword_search(
+        client, query, top_k, query_filter
+    )
+
+    rrf_k = 60
+    fused_scores = {}
+    points_by_id = {}
+
+    for ranked_results in (semantic, keyword):
+        for rank, point in enumerate(ranked_results, start=1):
+            point_id = str(point.id)
+
+            points_by_id[point_id] = point
+
+            fused_scores[point_id] = (
+                fused_scores.get(point_id, 0.0)
+                + 1.0 / (rrf_k + rank)
+            )
+
+    ranked_ids = sorted(
+        fused_scores,
+        key=lambda point_id: fused_scores[point_id],
+        reverse=True,
+    )
+
+    results = []
+
+    for point_id in ranked_ids[:top_k]:
+        point = points_by_id[point_id]
+        point.score = fused_scores[point_id]
+        results.append(point)
+
+    return results
+
+
 
 
 def _keyword_search(
-    client: QdrantClient, query: str, top_k: int, query_filter: models.Filter
+    client: QdrantClient,
+    query: str,
+    top_k: int,
+    query_filter: models.Filter,
 ) -> list[models.ScoredPoint]:
-    query_tokens = set(re.findall(r"\w+", query.lower()))
-    records, _ = client.scroll(
-        collection_name=COLLECTION_NAME,
-        scroll_filter=query_filter,
-        limit=1000,
-        with_payload=True,
-        with_vectors=False,
+    """Run BM25 on documents authorized by Qdrant RBAC."""
+
+    records = []
+    offset = None
+
+    # Retrieve all authorized chunks using Qdrant pagination.
+    while True:
+        batch, offset = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=query_filter,
+            limit=256,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        records.extend(batch)
+
+        if offset is None:
+            break
+
+    if not records:
+        return []
+
+    # Convert Qdrant payloads into DocumentChunk objects.
+    chunks = [
+        payload_to_chunk(record.payload)
+        for record in records
+    ]
+
+    retriever = BM25Retriever(chunks)
+
+    # Authorization has already been enforced by Qdrant.
+    ranked = retriever.search(
+        query=query,
+        top_k=len(chunks),
     )
-    scored: list[models.ScoredPoint] = []
-    for record in records:
-        content = str((record.payload or {}).get("content", ""))
-        tokens = set(re.findall(r"\w+", content.lower()))
-        score = len(query_tokens & tokens) / max(len(query_tokens), 1)
-        if score > 0:
-            scored.append(
-                models.ScoredPoint(
-                    id=record.id,
-                    version=0,
-                    score=score,
-                    payload=record.payload,
-                )
+
+    query_tokens = set(retriever._tokenize(query))
+
+    # Preserve original Qdrant records and payloads.
+    records_by_chunk_id = {
+        record.payload["chunk_id"]: record
+        for record in records
+    }
+
+    results = []
+
+    for chunk, raw_score in ranked:
+        chunk_tokens = set(retriever._tokenize(chunk.content))
+
+        if not query_tokens.intersection(chunk_tokens):
+            continue
+
+        if len(results) >= top_k:
+            break
+
+        record = records_by_chunk_id[chunk.chunk_id]
+
+        results.append(
+            models.ScoredPoint(
+                id=record.id,
+                version=0,
+                score=1.0 / (len(results) + 1),
+                payload=record.payload,
             )
-    return sorted(scored, key=lambda record: record.score, reverse=True)[:top_k]
+        )
+
+    return results
