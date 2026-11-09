@@ -78,6 +78,8 @@ POST /api/v1/search
 
 ## 📄 Documentation
 - See [docs/api-spec.md](docs/api-spec.md) for the REST interface contract.
+- See [docs/rbac-security.md](docs/rbac-security.md) for the Sprint 4 permission model.
+- See [docs/sprint-4-acceptance.md](docs/sprint-4-acceptance.md) for acceptance cases and the integration snapshot.
 - Once the backend is running, use the generated [Swagger UI](http://localhost:8000/docs)
   or [OpenAPI JSON](http://localhost:8000/openapi.json) as the executable contract.
 - Architecture diagrams and planning notes are kept under the [docs](docs) directory.

@@ -1,6 +1,24 @@
-// HTTP DTOs aligned with backend integration commit 6399a19.
+// HTTP DTOs shared by the Sprint 4 backend and frontend.
 // Keep display models in types.ts; do not add UI fields to these responses.
-export type Role = "Standard Staff" | "Department Manager" | "Executive";
+export type Role =
+  | "admin"
+  | "staff"
+  | "user"
+  // Legacy development adapter values retained during migration.
+  | "Standard Staff"
+  | "Department Manager"
+  | "Executive";
+export type PermissionLevel = 1 | 2 | 3;
+export type DocumentStatus =
+  | "processing"
+  | "indexed"
+  | "failed"
+  | "deleting";
+export type DocumentAction =
+  | "read"
+  | "change_permission"
+  | "reindex"
+  | "delete";
 export type SearchMode = "hybrid" | "semantic" | "keyword";
 export interface UserSummary {
   user_id: string;
@@ -20,14 +38,43 @@ export interface UploadResponse {
   filename: string;
   content_type: string;
   size_bytes: number;
-  status: "queued" | "indexed";
+  status: "queued" | DocumentStatus;
   message: string;
+  permission_level?: PermissionLevel;
+  creator?: CreatorSummary;
+  created_at?: string;
+  updated_at?: string;
+  available_actions?: DocumentAction[];
 }
 export interface SearchRequest {
   query: string;
   top_k?: number;
   search_mode?: SearchMode;
   filters?: Record<string, string>;
+  permission_level?: PermissionLevel;
+}
+export interface CreatorSummary {
+  user_id: string;
+  display_name: string;
+}
+export interface DocumentSummary {
+  document_id: string;
+  filename: string;
+  title: string;
+  content_type: string;
+  size_bytes: number;
+  permission_level: PermissionLevel;
+  creator: CreatorSummary;
+  created_at: string;
+  updated_at: string;
+  status: DocumentStatus;
+  available_actions: DocumentAction[];
+}
+export interface PaginatedDocuments {
+  items: DocumentSummary[];
+  page: number;
+  page_size: number;
+  total: number;
 }
 export interface SourceLocation {
   page: number | null;
@@ -44,6 +91,7 @@ export interface SearchResult {
   department_id: string;
   clearance_level: number;
   citation: SourceLocation;
+  permission_level?: PermissionLevel;
 }
 export interface SearchResponse {
   query: string;
@@ -51,4 +99,56 @@ export interface SearchResponse {
   results: SearchResult[];
   total: number;
   request_id: string;
+  elapsed_ms?: number;
+}
+
+export interface ScoreTrace {
+  bm25_raw: number | null;
+  bm25_rank: number | null;
+  dense_raw: number | null;
+  dense_rank: number | null;
+  fusion: number | null;
+  rerank: number | null;
+  final: number | null;
+}
+export interface ScoringCandidate {
+  document_id: string;
+  chunk_id: string;
+  permission_level: PermissionLevel;
+  scores: ScoreTrace;
+  final_rank: number;
+}
+export interface ScoringDebugResponse {
+  query: string;
+  search_mode: SearchMode;
+  top_k: number;
+  candidates: ScoringCandidate[];
+  stages: Array<"bm25" | "dense" | "rrf" | "rerank">;
+  timings_ms: Record<string, number>;
+  request_id: string;
+}
+export interface ConversationSummary {
+  conversation_id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface ConversationCitation extends SourceLocation {
+  document_id: string;
+  chunk_id: string;
+  title: string;
+  permission_level: PermissionLevel;
+  unavailable?: boolean;
+}
+export interface ConversationMessage {
+  message_id: string;
+  sequence: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  citations: ConversationCitation[];
+}
+export interface Conversation extends ConversationSummary {
+  owner_id: string;
+  messages: ConversationMessage[];
 }

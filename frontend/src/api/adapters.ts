@@ -2,6 +2,9 @@ import type { SearchResponse, TokenResponse, Role } from "./contracts";
 import type { AssistantResponse, Citation, Session } from "../types";
 
 const rolePermissions: Record<Role, string[]> = {
+  admin: ["document:read", "document:upload", "document:manage"],
+  staff: ["document:read", "document:upload"],
+  user: ["document:read"],
   "Standard Staff": ["document:read"],
   "Department Manager": ["document:read", "document:upload"],
   Executive: ["document:read", "document:upload", "document:manage"],

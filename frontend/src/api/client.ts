@@ -138,7 +138,7 @@ export function createApiClient(options: ClientOptions) {
               501,
             ),
           ),
-    upload: (file: File, token: string) => {
+    upload: (file: File, token: string, permissionLevel?: number) => {
       const body = new FormData();
       // Browsers may omit Markdown MIME; the backend validates content_type.
       body.append(
@@ -148,6 +148,9 @@ export function createApiClient(options: ClientOptions) {
         }),
         file.name,
       );
+      if (permissionLevel !== undefined) {
+        body.append("permission_level", String(permissionLevel));
+      }
       return request<UploadResponse>(
         "/api/v1/upload",
         { method: "POST", body },
