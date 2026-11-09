@@ -1,103 +1,85 @@
-# Enterprise RBAC and JWT Security Design
+# Document Permission Model and RBAC
 
-## Role and permission matrix
+This document defines the Sprint 4 authorization contract. The API server is
+the authority for both operation permissions and document visibility. A UI
+may hide unavailable actions, but it must not make authorization decisions.
 
-| Role | Clearance | Read permitted documents | Upload documents | Manage documents/access | Scope |
-| --- | ---: | :---: | :---: | :---: | --- |
-| Executive | 3 | Yes | Yes | Yes | All departments |
-| Department Manager | 2 | Yes | Yes | No | Assigned department |
-| Standard Staff | 1 | Yes | No | No | Documents visible at clearance 1 |
+## Permission levels
 
-Clearance is a data-sensitivity level, not a replacement for permissions:
-the request must pass both the operation permission check and the document
-clearance/department filter. A future retrieval adapter should apply these
-checks before ranking results, not after snippets have been returned.
+`permission_level` is a document sensitivity classification, not a user role
+or an operation permission.
 
-## JWT payload
+| Level | Meaning | Default |
+| ---: | --- | :---: |
+| 1 | General internal material suitable for ordinary authenticated users | Yes |
+| 2 | Restricted material for explicitly authorized administrators | No |
+| 3 | Highly restricted material for explicitly authorized administrators | No |
 
-The access token is signed with `HS256` in the development scaffold. Production
-deployment should use a managed key or asymmetric signing keys and rotate them
-without changing the client contract.
+If upload omits `permission_level`, the server assigns level 1. The server
+rejects values outside `1..3`; it never infers a higher level from a client
+role field. New documents and existing documents without a recorded level
+must be treated as level 1 until an administrator explicitly reclassifies
+them. This migration default preserves access without silently widening
+access to restricted content.
 
-```json
-{
-  "iss": "enterprise-rag-api",
-  "sub": "user_abc123",
-  "username": "manager@enterprise.local",
-  "role": "Department Manager",
-  "department": "General",
-  "clearance": 2,
-  "permissions": ["document:read", "document:upload"],
-  "iat": 1727520000,
-  "exp": 1727523600,
-  "jti": "unique-token-id"
-}
-```
+## Role and action matrix
 
-### Claim rules
+The product roles for this contract are `admin`, `staff`, and `user`. Roles
+and permissions come from the authenticated server-side identity; clients
+cannot set or override them in a request body, query string, or upload form.
 
-- `iss` must match the configured issuer.
-- `sub` is the stable User identifier.
-- `role`, `department`, `clearance`, and `permissions` are signed server
-  claims; the frontend must treat them as read-only display metadata.
-- `iat` and `exp` limit token lifetime to one hour in the scaffold.
-- `jti` supports future revocation/audit tracking.
-- The backend validates the signature, algorithm, issuer, expiration, and
-  required claim shape before constructing the authenticated User.
+| Action / visibility | Admin | Staff | User |
+| --- | :---: | :---: | :---: |
+| Read/search level 1 | Yes | Yes | Yes |
+| Read/search level 2 or 3 | Yes | No | No |
+| Upload | Yes (levels 1–3) | Yes (level 1 only) | No |
+| List and view document metadata | All documents | Level 1 only | Level 1 only |
+| Change permission level | Yes | No | No |
+| Re-index or delete | Yes | No | No |
+| View scoring debug details | Yes | No | No |
 
-## Request contract
+`staff` can access level 1 documents and cannot access level 2 or 3 documents.
+The `user` role has the same visibility ceiling and fewer management actions.
+For the repository's current demo identities, the target adapter mapping is
+`Executive` → `admin`, `Department Manager` → `staff`, and `Standard Staff` →
+`user`. This mapping is a role translation only: all non-admin users have the
+same level-1 visibility ceiling. The adapter must not use the old numeric
+`clearance` value as a substitute for `permission_level`.
 
-```http
-Authorization: Bearer <signed-jwt>
-```
+## Enforcement requirements
 
-`POST /api/v1/search` requires a valid token and applies the token's clearance
-to retrieval. `POST /api/v1/upload` additionally requires
-`document:upload`. The client no longer submits `user_role`; the backend takes
-the department and clearance from the verified token.
+- Validate the bearer token and operation permission on every protected
+  endpoint. Return `401` for missing/invalid credentials and `403` for an
+  authenticated principal lacking the operation permission.
+- Apply the document visibility filter in the database/vector query before
+  ranking, snippet construction, citation generation, or debug serialization.
+  Repeat the check before returning document details or changing/deleting a
+  document; do not rely on a filtered list or a hidden UI button.
+- Visibility predicate: `admin OR document.permission_level = 1`. Staff and
+  user do not receive level 2/3 results. A caller-supplied filter may narrow
+  this set but may never widen it.
+- Do not disclose existence, title, creator, counts, citations, or filter
+  reasons for a document the caller cannot see. Return the same not-found
+  response for an absent document and an inaccessible document.
+- Only admin may assign levels 2 or 3, change a document's level, re-index,
+  delete, or inspect per-candidate scoring diagnostics. Staff uploads are
+  forced to level 1 even if a request attempts another value.
+- Keep document metadata in the relational/document catalog and copy
+  `permission_level` to every indexed chunk payload. A mismatch or missing
+  payload level fails closed for retrieval until repaired/re-indexed.
+- Deletion is complete only after catalog metadata, all vector chunks, and
+  related search/index records are removed. If any step fails, return an
+  error and record enough server-side state to retry; do not report success.
 
-Unauthenticated requests return `401`. Authenticated users without the
-required permission return `403`. Invalid request bodies continue to return
-FastAPI's standard `422` response.
+## Token and audit claims
 
-## Development users
+The token contains stable `sub`, product `role`, and server-issued `permissions`
+plus issuer and expiry claims. Do not accept a role, permission, owner, or
+level claim from an untrusted client. Audit document creation, permission
+changes, re-indexing, and deletion with actor, document, old/new level where
+applicable, timestamp, and outcome.
 
-The mock login endpoint accepts non-empty credentials to keep frontend work
-unblocked. It assigns roles by username:
-
-- `executive@enterprise.local` -> Executive
-- `manager@enterprise.local` -> Department Manager
-- any other non-empty username -> Standard Staff
-
-This is intentionally a development adapter and must be replaced by the
-identity provider before production use. Set `JWT_SECRET` and `JWT_ISSUER`
-through environment variables; never commit a production signing secret.
-
-## Qdrant payload schema
-
-The `enterprise_documents` collection uses 384-dimensional cosine vectors.
-Every chunk payload must contain these access-control fields:
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `document_id` | keyword | Stable source document identifier |
-| `chunk_id` | keyword | Stable chunk identifier |
-| `department_id` | keyword | Owning department identifier, or `Global` |
-| `clearance_level` | integer | Minimum clearance required to retrieve the chunk |
-| `content_type` | keyword | Source MIME type |
-| `title` | keyword | Display title |
-| `content` | text | Chunk text used for citation |
-| `page`, `line_start`, `line_end` | integer | Citation coordinates |
-
-`department_id` and `clearance_level` are indexed payload fields. The retrieval
-adapter must pass the RBAC filter into Qdrant's vector search before ranking:
-
-- `clearance_level <= user.clearance`
-- non-Executive users additionally match their department or `Global`
-- Executive users may search all departments, subject to clearance
-
-The implementation lives in `backend/qdrant_schema.py`; collection creation
-is explicit through `ensure_collection(client)`. Provision the local collection
-with `python -m backend.init_qdrant` after Qdrant is running; application
-startup does not silently create or mutate infrastructure when Qdrant is
-unavailable.
+The current repository has a development-only mock login and an older
+`clearance`-based implementation. Those are scaffold behavior, not the
+Sprint 4 contract. Production identity and persistent audit storage remain
+deployment requirements.
