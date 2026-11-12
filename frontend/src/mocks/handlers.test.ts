@@ -105,7 +105,7 @@ describe("mock API contract", () => {
       score: 0.92,
       content_type: "application/pdf",
       department_id: "Global",
-      clearance_level: 1,
+      permission_level: 1,
       citation: { page: 12, line_start: null, line_end: null },
     });
     expect(response).not.toHaveProperty("answer");

@@ -89,9 +89,8 @@ export interface SearchResult {
   content: string;
   content_type: string;
   department_id: string;
-  clearance_level: number;
+  permission_level: PermissionLevel;
   citation: SourceLocation;
-  permission_level?: PermissionLevel;
 }
 export interface SearchResponse {
   query: string;

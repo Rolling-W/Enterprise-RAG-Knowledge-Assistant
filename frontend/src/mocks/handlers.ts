@@ -177,6 +177,40 @@ export function createMockTransport(options: MockOptions = {}) {
           { detail: "The upload could not be completed. Please try again." },
           503,
         );
+
+      const rawPermissionLevel =
+        init.body instanceof FormData
+          ? init.body.get("permission_level")
+          : null;
+
+      let permissionLevel: 1 | 2 | 3 = 1;
+
+      if (rawPermissionLevel !== null) {
+        if (
+          rawPermissionLevel !== "1" &&
+          rawPermissionLevel !== "2" &&
+          rawPermissionLevel !== "3"
+        ) {
+          return validationError(
+            "permission_level",
+            "Permission level must be 1, 2, or 3",
+          );
+        }
+
+        permissionLevel =
+          rawPermissionLevel === "1"
+            ? 1
+            : rawPermissionLevel === "2"
+              ? 2
+              : 3;
+      }
+
+      if (user.role !== "Executive" && permissionLevel !== 1) {
+        return json(
+          { detail: "Your role can only upload Level 1 documents." },
+          403,
+        );
+      }
       const type = fileContentType(file)!;
       const document: KnowledgeDocument = {
         document_id: `doc-${crypto.randomUUID()}`,
@@ -189,7 +223,7 @@ export function createMockTransport(options: MockOptions = {}) {
               : "Text",
         size_bytes: file.size,
         department: user.department,
-        min_clearance: user.clearance,
+        min_clearance: permissionLevel,
         uploaded_at: new Date().toISOString(),
         status: "processing",
         description: "Uploaded document.",
@@ -296,7 +330,7 @@ export function createMockTransport(options: MockOptions = {}) {
                 ? "text/markdown"
                 : "text/plain",
           department_id: document.department,
-          clearance_level: document.min_clearance,
+          permission_level: document.min_clearance,
           citation: {
             page:
               document.format === "PDF"
