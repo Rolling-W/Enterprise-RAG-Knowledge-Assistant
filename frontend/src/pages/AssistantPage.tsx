@@ -7,12 +7,19 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { SearchMode } from "../api/contracts";
-import { citationLocation, toAssistantResponse } from "../api/adapters";
+import {
+  citationLocation,
+  productRole,
+  toAssistantResponse,
+  toMessages,
+} from "../api/adapters";
 import { useAuth } from "../context/AuthContext";
 import { Icon } from "../components/Icon";
 import { SourceDrawer } from "../components/SourceDrawer";
+import { ConversationHistory } from "../components/ConversationHistory";
+import { ScoringDebug } from "../components/ScoringDebug";
 import type { Message, PreviewSelection } from "../types";
 
 const suggestions = [
@@ -41,6 +48,13 @@ export function AssistantPage() {
   const [selection, setSelection] = useState<PreviewSelection | null>(null);
   const [copied, setCopied] = useState("");
   const [copyError, setCopyError] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [searchOnly, setSearchOnly] = useState(false);
+  const [serviceNotice, setServiceNotice] = useState("");
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const sending = useRef(false);
   const requestNumber = useRef(0);
   const bottom = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -58,7 +72,15 @@ export function AssistantPage() {
   }, [messages, busy]);
   async function ask(value: string, mode: SearchMode = searchMode) {
     const query = value.trim();
-    if (!query || busy || query.length > 500) return;
+    if (
+      !query ||
+      sending.current ||
+      loadingConversation ||
+      loadError ||
+      query.length > 500
+    )
+      return;
+    sending.current = true;
     const request = ++requestNumber.current;
     setMessages((previous) => [
       ...previous,
@@ -66,23 +88,66 @@ export function AssistantPage() {
     ]);
     setQuestion("");
     setBusy(true);
+    let savedId = conversationId;
     try {
-      const response = toAssistantResponse(
-        await api.search(query, session!.access_token, { search_mode: mode }),
-      );
-      if (request === requestNumber.current)
-        setMessages((previous) => [
-          ...previous,
-          {
-            id: response.request_id,
-            kind: "assistant",
-            content: response.answer,
-            citations: response.citations,
-            search_mode: mode,
-          },
-        ]);
+      let ephemeral = searchOnly;
+      if (!ephemeral && !savedId) {
+        try {
+          const created = await api.createConversation(
+            session!.access_token,
+            query.slice(0, 80),
+          );
+          if (request !== requestNumber.current) return;
+          savedId = created.conversation_id;
+          setConversationId(savedId);
+        } catch (reason) {
+          if (
+            !(reason instanceof ApiError) ||
+            ![404, 405, 501].includes(reason.status)
+          )
+            throw reason;
+          if (request !== requestNumber.current) return;
+          ephemeral = true;
+          setSearchOnly(true);
+          setServiceNotice(
+            "Conversation saving is not available on this backend yet. This conversation is search-only and will not be saved.",
+          );
+        }
+      }
+      if (!ephemeral && savedId) {
+        await api.sendMessage(savedId, query, session!.access_token);
+        if (request !== requestNumber.current) return;
+        const conversation = await api.conversation(
+          savedId,
+          session!.access_token,
+        );
+        if (request === requestNumber.current) {
+          setMessages(toMessages(conversation.messages));
+          setHistoryRevision((value) => value + 1);
+        }
+      } else {
+        const response = toAssistantResponse(
+          await api.search(query, session!.access_token, { search_mode: mode }),
+        );
+        if (request === requestNumber.current)
+          setMessages((previous) => [
+            ...previous,
+            {
+              id: response.request_id,
+              kind: "assistant",
+              content: response.answer,
+              citations: response.citations,
+              search_mode: mode,
+            },
+          ]);
+      }
     } catch (reason) {
-      if (request === requestNumber.current)
+      if (request === requestNumber.current && savedId) {
+        setLoadError(
+          `${reason instanceof Error ? reason.message : "Unable to confirm message delivery."} Reload this conversation before sending again to avoid duplicate messages.`,
+        );
+        setHistoryRevision((value) => value + 1);
+      } else if (request === requestNumber.current)
         setMessages((previous) => [
           ...previous,
           {
@@ -98,6 +163,7 @@ export function AssistantPage() {
         ]);
     } finally {
       if (request === requestNumber.current) {
+        sending.current = false;
         setBusy(false);
         input.current?.focus();
       }
@@ -124,7 +190,44 @@ export function AssistantPage() {
     setBusy(false);
     setSelection(null);
     setCopyError("");
+    setCopied("");
+    clearTimeout(copyTimer.current);
+    setConversationId(null);
+    setLoadingConversation(false);
+    setLoadError("");
+    sending.current = false;
     input.current?.focus();
+  }
+  async function loadConversation(id: string) {
+    const request = ++requestNumber.current;
+    sending.current = false;
+    setBusy(false);
+    setLoadingConversation(true);
+    setLoadError("");
+    setConversationId(id);
+    setSearchOnly(false);
+    setServiceNotice("");
+    setMessages([]);
+    setSelection(null);
+    setQuestion("");
+    setCopyError("");
+    setCopied("");
+    try {
+      const conversation = await api.conversation(id, session!.access_token);
+      if (request === requestNumber.current)
+        setMessages(toMessages(conversation.messages));
+    } catch (reason) {
+      if (request === requestNumber.current)
+        setLoadError(
+          reason instanceof ApiError && [403, 404].includes(reason.status)
+            ? "This conversation is unavailable or belongs to another account."
+            : reason instanceof Error
+              ? reason.message
+              : "Unable to restore conversation.",
+        );
+    } finally {
+      if (request === requestNumber.current) setLoadingConversation(false);
+    }
   }
   async function copy(message: Message) {
     try {
@@ -151,12 +254,63 @@ export function AssistantPage() {
           New conversation
         </button>
       </header>
+      <ConversationHistory
+        token={session!.access_token}
+        activeId={conversationId}
+        revision={historyRevision}
+        onSelect={(id) => void loadConversation(id)}
+        onDeleted={(id) => {
+          if (id === conversationId) newConversation();
+        }}
+      />
+      <div className="conversation-options">
+        <label>
+          <input
+            type="checkbox"
+            checked={!searchOnly}
+            onChange={(event) => {
+              newConversation();
+              setSearchOnly(!event.target.checked);
+              setServiceNotice("");
+            }}
+          />{" "}
+          Save conversation
+        </label>
+        <span>
+          {searchOnly
+            ? "Search-only · messages are not saved"
+            : "Saved conversations use the server retrieval settings."}
+        </span>
+      </div>
+      {serviceNotice && (
+        <p className="notice" role="status">
+          {serviceNotice}
+        </p>
+      )}
+      {loadingConversation && (
+        <p className="loading-state" role="status">
+          Restoring conversation…
+        </p>
+      )}
+      {loadError && (
+        <p className="notice error" role="alert">
+          {loadError}{" "}
+          {conversationId && (
+            <button
+              className="text-button"
+              onClick={() => void loadConversation(conversationId)}
+            >
+              Reload conversation
+            </button>
+          )}
+        </p>
+      )}
       <div className="assistant-scope">
         <span>
           <Icon name="shield" size={15} />
-          {session!.user.role === "Executive"
-            ? "Cross-department access"
-            : "Your department & shared knowledge"}
+          {productRole(session!.user.role) === "admin"
+            ? "Levels 1–3 available"
+            : "Level 1 knowledge"}
         </span>
         <Link to="/documents">
           Browse documents
@@ -169,7 +323,7 @@ export function AssistantPage() {
         aria-label="Conversation"
         aria-live="polite"
       >
-        {messages.length === 0 ? (
+        {messages.length === 0 && !loadingConversation && !loadError ? (
           <section className="assistant-welcome">
             <div className="welcome-symbol">
               <Icon name="sparkles" size={34} />
@@ -185,6 +339,7 @@ export function AssistantPage() {
                 <button
                   className="suggestion"
                   key={item.title}
+                  disabled={busy || loadingConversation || !!loadError}
                   onClick={() => void ask(item.question)}
                 >
                   <span className="suggestion-icon">
@@ -219,6 +374,14 @@ export function AssistantPage() {
                     {message.kind === "assistant"
                       ? "Knowledge assistant"
                       : "You"}
+                    {message.created_at && (
+                      <time
+                        className="message-time"
+                        dateTime={message.created_at}
+                      >
+                        {new Date(message.created_at).toLocaleString()}
+                      </time>
+                    )}
                   </div>
                   <div className="answer-text">
                     {message.content.split("\n\n").map((paragraph, index) => (
@@ -233,6 +396,7 @@ export function AssistantPage() {
                       {message.citations.map((citation, index) => (
                         <button
                           className="citation-card"
+                          disabled={citation.unavailable}
                           key={`${citation.document_id}:${citation.id}`}
                           onClick={() =>
                             setSelection({
@@ -245,7 +409,16 @@ export function AssistantPage() {
                           <div>
                             <strong>{citation.title}</strong>
                             <span>{citationLocation(citation)}</span>
-                            <span>Score {citation.score.toFixed(3)}</span>
+                            {citation.permission_level !== undefined &&
+                              !citation.unavailable && (
+                                <span>Level {citation.permission_level}</span>
+                              )}
+                            {citation.score !== undefined && (
+                              <span>Score {citation.score.toFixed(3)}</span>
+                            )}
+                            {citation.unavailable && (
+                              <span>Source unavailable or access changed</span>
+                            )}
                           </div>
                           <Icon name="chevron" size={16} />
                         </button>
@@ -277,7 +450,8 @@ export function AssistantPage() {
                           (item) => item.id === message.id,
                         );
                         const previous = messages[position - 1];
-                        if (previous) void ask(previous.content, message.search_mode);
+                        if (previous)
+                          void ask(previous.content, message.search_mode);
                       }}
                       disabled={busy}
                     >
@@ -310,13 +484,18 @@ export function AssistantPage() {
           <select
             id="search-mode"
             value={searchMode}
-            onChange={(event) => setSearchMode(event.target.value as SearchMode)}
-            disabled={busy}
+            onChange={(event) =>
+              setSearchMode(event.target.value as SearchMode)
+            }
+            disabled={busy || !searchOnly || loadingConversation || !!loadError}
           >
             <option value="hybrid">Hybrid</option>
             <option value="semantic">Semantic</option>
             <option value="keyword">Keyword</option>
           </select>
+          {!searchOnly && (
+            <span>Use search-only mode to select retrieval mode.</span>
+          )}
         </div>
         {copyError && (
           <p className="notice error" role="alert">
@@ -336,7 +515,7 @@ export function AssistantPage() {
             placeholder="Ask a question about your documents…"
             rows={2}
             maxLength={500}
-            disabled={busy}
+            disabled={busy || loadingConversation || !!loadError}
           />
           <div className="composer-toolbar">
             <span>Enter to send · Shift + Enter for a new line</span>
@@ -345,7 +524,9 @@ export function AssistantPage() {
               <button
                 className="send-button"
                 type="submit"
-                disabled={!question.trim() || busy}
+                disabled={
+                  !question.trim() || busy || loadingConversation || !!loadError
+                }
                 aria-label="Send question"
               >
                 {busy ? (
@@ -361,6 +542,9 @@ export function AssistantPage() {
           Review the sources to verify important details.
         </p>
       </div>
+      {import.meta.env.DEV && productRole(session!.user.role) === "admin" && (
+        <ScoringDebug token={session!.access_token} />
+      )}
       {selection && (
         <SourceDrawer selection={selection} onClose={closePreview} />
       )}

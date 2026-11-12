@@ -2,6 +2,7 @@ import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Icon } from "./Icon";
+import { productRole } from "../api/adapters";
 
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
@@ -61,19 +62,24 @@ export function AppLayout() {
           </NavLink>
         </nav>
         <div className="sidebar-bottom">
-          <div className="scope-note" title={collapsed ? "Permission-aware access" : undefined}>
+          <div
+            className="scope-note"
+            title={collapsed ? "Permission-aware access" : undefined}
+          >
             <Icon name="shield" />
             <div className="sidebar-text">
               Permission-aware access
               <small>
-                {user.role === "Executive"
-                  ? "Across departments"
-                  : `${user.department} & shared documents`}
+                {productRole(user.role) === "admin"
+                  ? "Levels 1–3"
+                  : "Level 1 documents"}
               </small>
             </div>
           </div>
           <div className="sidebar-profile">
-            <span className="avatar" title={`${user.name} · ${user.role}`}>{initials}</span>
+            <span className="avatar" title={`${user.name} · ${user.role}`}>
+              {initials}
+            </span>
             <div className="sidebar-text">
               <strong>{user.name}</strong>
               <small>{user.role}</small>

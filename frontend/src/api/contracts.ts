@@ -9,23 +9,17 @@ export type Role =
   | "Department Manager"
   | "Executive";
 export type PermissionLevel = 1 | 2 | 3;
-export type DocumentStatus =
-  | "processing"
-  | "indexed"
-  | "failed"
-  | "deleting";
+export type DocumentStatus = "processing" | "indexed" | "failed" | "deleting";
 export type DocumentAction =
-  | "read"
-  | "change_permission"
-  | "reindex"
-  | "delete";
+  "read" | "change_permission" | "reindex" | "delete";
 export type SearchMode = "hybrid" | "semantic" | "keyword";
 export interface UserSummary {
   user_id: string;
   username: string;
   role: Role;
-  department: string;
-  clearance: number;
+  department?: string;
+  clearance?: number;
+  permissions?: string[];
 }
 export interface TokenResponse {
   access_token: string;
@@ -39,7 +33,7 @@ export interface UploadResponse {
   content_type: string;
   size_bytes: number;
   status: "queued" | DocumentStatus;
-  message: string;
+  message?: string;
   permission_level?: PermissionLevel;
   creator?: CreatorSummary;
   created_at?: string;
@@ -50,8 +44,7 @@ export interface SearchRequest {
   query: string;
   top_k?: number;
   search_mode?: SearchMode;
-  filters?: Record<string, string>;
-  permission_level?: PermissionLevel;
+  filters?: Record<string, string | number>;
 }
 export interface CreatorSummary {
   user_id: string;
@@ -76,6 +69,27 @@ export interface PaginatedDocuments {
   page_size: number;
   total: number;
 }
+export interface DocumentDetail extends DocumentSummary {
+  preview?: string;
+  page_count?: number;
+}
+export interface DocumentQuery {
+  page?: number;
+  page_size?: number;
+  sort_by?:
+    "created_at" | "updated_at" | "filename" | "permission_level" | "status";
+  sort_order?: "asc" | "desc";
+  permission_level?: PermissionLevel;
+  creator_id?: string;
+  status?: DocumentStatus;
+  q?: string;
+}
+export interface Page<T> {
+  items: T[];
+  page: number;
+  page_size: number;
+  total: number;
+}
 export interface SourceLocation {
   page: number | null;
   line_start: number | null;
@@ -88,8 +102,8 @@ export interface SearchResult {
   score: number;
   content: string;
   content_type: string;
-  department_id: string;
-  clearance_level: number;
+  department_id?: string;
+  clearance_level?: number;
   citation: SourceLocation;
   permission_level?: PermissionLevel;
 }
