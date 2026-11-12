@@ -1,6 +1,13 @@
-# Frontend Sprint 2 integration notes
+# Frontend integration notes
 
-## Current integration — October 26, 2026
+## Sprint 4 frontend — November 12, 2026
+
+The frontend now consumes the Sprint 4 document management, permission,
+conversation and scoring contracts. See [frontend-sprint-4.md](./frontend-sprint-4.md)
+for the implementation, test coverage and pending backend integration. The
+sections below describe the earlier Sprint 2/3 implementation and are historical.
+
+## Historical integration — October 26, 2026
 
 Backend commit `6399a19` from `ruolin/sprint2-architecture-qdrant` is merged into
 `yunting-dev`. The earlier October 14 assessment below is historical.

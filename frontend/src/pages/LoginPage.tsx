@@ -3,9 +3,9 @@ import { useAuth } from "../context/AuthContext";
 import { Icon } from "../components/Icon";
 
 const accounts = [
-  { role: "Staff", email: "staff@enterprise.local" },
-  { role: "Manager", email: "manager@enterprise.local" },
-  { role: "Executive", email: "executive@enterprise.local" },
+  { role: "User", email: "staff@enterprise.local" },
+  { role: "Staff", email: "manager@enterprise.local" },
+  { role: "Admin", email: "executive@enterprise.local" },
 ];
 
 export function LoginPage() {
@@ -175,9 +175,7 @@ export function LoginPage() {
               ))}
             </div>
           </div>
-          <div className="login-footer">
-            Enterprise RAG Knowledge Assistant
-          </div>
+          <div className="login-footer">Enterprise RAG Knowledge Assistant</div>
         </div>
       </section>
     </main>

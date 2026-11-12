@@ -1,4 +1,9 @@
-import type { SearchResponse, TokenResponse, Role } from "./contracts";
+import type {
+  SearchResponse,
+  TokenResponse,
+  Role,
+  ConversationMessage,
+} from "./contracts";
 import type { AssistantResponse, Citation, Session } from "../types";
 
 const rolePermissions: Record<Role, string[]> = {
@@ -17,7 +22,9 @@ export function toSession(response: TokenResponse): Session {
       ...response.user,
       name: response.user.username.split("@")[0] || response.user.username,
       // UI visibility only. Backend remains responsible for authorization.
-      permissions: [...rolePermissions[response.user.role]],
+      permissions: [
+        ...(response.user.permissions ?? rolePermissions[response.user.role]),
+      ],
     },
   };
 }
@@ -36,11 +43,46 @@ export function toAssistantResponse(
       title: result.title,
       score: result.score,
       content: result.content,
+      permission_level: result.permission_level,
       page: result.citation.page ?? undefined,
       line_start: result.citation.line_start ?? undefined,
       line_end: result.citation.line_end ?? undefined,
     })),
   };
+}
+
+export function productRole(role: Role): "admin" | "staff" | "user" {
+  if (role === "Executive" || role === "admin") return "admin";
+  if (role === "Department Manager" || role === "staff") return "staff";
+  return "user";
+}
+
+export function toMessages(
+  messages: ConversationMessage[],
+): import("../types").Message[] {
+  return [...messages]
+    .sort(
+      (a, b) =>
+        a.sequence - b.sequence || a.created_at.localeCompare(b.created_at),
+    )
+    .map((message) => ({
+      id: message.message_id,
+      kind: message.role,
+      content: message.content,
+      created_at: message.created_at,
+      sequence: message.sequence,
+      citations: message.citations.map((citation) => ({
+        id: citation.chunk_id,
+        document_id: citation.document_id,
+        title: citation.unavailable ? "Unavailable source" : citation.title,
+        permission_level: citation.permission_level,
+        unavailable: citation.unavailable,
+        page: citation.page ?? undefined,
+        line_start: citation.line_start ?? undefined,
+        line_end: citation.line_end ?? undefined,
+        content: "",
+      })),
+    }));
 }
 
 export function citationLocation(citation: Citation): string {

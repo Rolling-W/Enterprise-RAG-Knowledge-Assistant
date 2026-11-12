@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { Icon } from "./Icon";
 import { fileSize, validateFile } from "../uploadPolicy";
-import type { UploadResponse } from "../api/contracts";
+import type { PermissionLevel, UploadResponse } from "../api/contracts";
 
 interface FileUploadProps {
-  onUpload: (file: File) => Promise<UploadResponse>;
+  onUpload: (file: File, level: PermissionLevel) => Promise<UploadResponse>;
+  allowedLevels?: PermissionLevel[];
   onUploaded?: (response: UploadResponse) => void;
   trackProcessing?: boolean;
 }
@@ -12,9 +13,12 @@ export function FileUpload({
   onUpload,
   onUploaded,
   trackProcessing = true,
+  allowedLevels = [1],
 }: FileUploadProps) {
   const titleId = useId();
   const inputId = useId();
+  const levelId = useId();
+  const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>(1);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -57,13 +61,20 @@ export function FileUpload({
     setError("");
     setSuccess("");
     try {
-      const response = await onUpload(file);
+      const response = await onUpload(
+        file,
+        allowedLevels.includes(permissionLevel) ? permissionLevel : 1,
+      );
       if (alive.current) {
         setSuccess(
           response.status === "indexed"
-            ? `${response.filename} is indexed and ready to search. ${response.message}`
+            ? `${response.filename} is indexed and ready to search. ${response.message ?? ""}`
             : `${response.filename} was received.${trackProcessing ? " Track its processing status below." : ""}`,
         );
+        if (response.permission_level !== undefined)
+          setSuccess(
+            (value) => `${value} Access: Level ${response.permission_level}.`,
+          );
         setFile(null);
         if (fileInput.current) fileInput.current.value = "";
         onUploaded?.(response);
@@ -88,7 +99,7 @@ export function FileUpload({
         </span>
         <div>
           <h2 id={titleId}>Add to your knowledge base</h2>
-          <p>Upload a document to your department’s library.</p>
+          <p>Upload a document with the appropriate access level.</p>
         </div>
       </div>
       <div
@@ -165,11 +176,39 @@ export function FileUpload({
           </button>
         )}
       </div>
+      <div className="permission-picker">
+        <label htmlFor={levelId}>Document permission level</label>
+        <select
+          id={levelId}
+          value={allowedLevels.includes(permissionLevel) ? permissionLevel : 1}
+          disabled={busy}
+          onChange={(event) =>
+            setPermissionLevel(Number(event.target.value) as PermissionLevel)
+          }
+        >
+          {allowedLevels.map((level) => (
+            <option key={level} value={level}>
+              Level {level} —{" "}
+              {level === 1
+                ? "General internal"
+                : level === 2
+                  ? "Restricted"
+                  : "Highly restricted"}
+            </option>
+          ))}
+        </select>
+        <span>
+          Default: Level 1.{" "}
+          {allowedLevels.length === 1
+            ? "Your account can upload Level 1 documents only."
+            : "Levels 2 and 3 are visible to administrators only."}
+        </span>
+      </div>
       <div className="upload-policy">
         <Icon name="shield" size={15} />
         <span>
-          Uploaded documents will be available to authorized users in your
-          department.
+          Level 1 is available to all authenticated users. Access is verified by
+          the server.
         </span>
       </div>
       {error && (
