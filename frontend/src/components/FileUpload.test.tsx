@@ -6,15 +6,54 @@ import { uploadFixture } from "../test/fixtures";
 import { MAX_FILE_BYTES } from "../uploadPolicy";
 
 describe("FileUpload", () => {
+  it("defaults to Level 1 and sends an administrator's explicit selection", async () => {
+    const upload = vi
+      .fn()
+      .mockResolvedValue({ ...uploadFixture, permission_level: 3 });
+    render(<FileUpload allowedLevels={[1, 2, 3]} onUpload={upload} />);
+    expect(screen.getByLabelText("Document permission level")).toHaveValue("1");
+    await userEvent.selectOptions(
+      screen.getByLabelText("Document permission level"),
+      "3",
+    );
+    await userEvent.upload(
+      screen.getByLabelText("Choose a document"),
+      new File(["policy"], "policy.txt"),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Upload document" }),
+    );
+    expect(upload).toHaveBeenCalledWith(expect.any(File), 3);
+    expect(screen.getByRole("status")).toHaveTextContent("Access: Level 3");
+  });
   it("shows indexed completion from the real upload contract without suggesting pending processing", async () => {
-    const indexed = { ...uploadFixture, status: "indexed" as const, message: "Indexed 3 chunks for General with clearance 2" };
+    const indexed = {
+      ...uploadFixture,
+      status: "indexed" as const,
+      message: "Indexed 3 chunks for General with clearance 2",
+    };
     const onUploaded = vi.fn();
-    render(<FileUpload onUpload={vi.fn().mockResolvedValue(indexed)} onUploaded={onUploaded} trackProcessing={false} />);
-    await userEvent.upload(screen.getByLabelText("Choose a document"), new File(["policy"], "policy.md"));
-    await userEvent.click(screen.getByRole("button", { name: "Upload document" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("policy.md is indexed and ready to search");
+    render(
+      <FileUpload
+        onUpload={vi.fn().mockResolvedValue(indexed)}
+        onUploaded={onUploaded}
+        trackProcessing={false}
+      />,
+    );
+    await userEvent.upload(
+      screen.getByLabelText("Choose a document"),
+      new File(["policy"], "policy.md"),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Upload document" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "policy.md is indexed and ready to search",
+    );
     expect(screen.getByRole("status")).toHaveTextContent("Indexed 3 chunks");
-    expect(screen.getByRole("status")).not.toHaveTextContent("Track its processing");
+    expect(screen.getByRole("status")).not.toHaveTextContent(
+      "Track its processing",
+    );
     expect(onUploaded).toHaveBeenCalledWith(indexed);
   });
   it.each(["policy.pdf", "policy.md", "policy.txt"])(

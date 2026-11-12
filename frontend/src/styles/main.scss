@@ -2206,3 +2206,124 @@ textarea::placeholder {
     scroll-behavior: auto !important;
   }
 }
+
+// Sprint 4 document management and saved conversations.
+select {
+  font: inherit;
+  color: $ink;
+}
+.document-filters, .debug-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 14px;
+  padding: 18px 0;
+}
+.document-filters label, .debug-controls label, .permission-picker, .action-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.document-filters input, .document-filters select, .debug-controls input, .debug-controls select,
+.permission-picker select, .action-dialog select, .pagination select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  background: white;
+  border: 1px solid $border;
+  border-radius: 7px;
+}
+.permission-picker {
+  margin: 18px 0 10px;
+  max-width: 480px;
+  span { color: #61728d; font-weight: 400; line-height: 1.6; }
+}
+.document-secondary { margin-top: 5px; font-size: 12px; color: #61728d; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px 14px; min-width: 145px; }
+.pagination, .dialog-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 18px 0;
+  label { display: flex; align-items: center; gap: 10px; }
+  select { width: auto; }
+}
+.action-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  padding: 28px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 20px 70px #10223c30;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  p { line-height: 1.6; }
+  .dialog-actions { justify-content: flex-end; padding-bottom: 0; }
+}
+.detail-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 18px;
+  margin: 20px 0;
+  font-size: 13px;
+  dt { color: #61728d; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+}
+.assistant-page { height: auto; min-height: calc(100dvh - 104px); }
+.assistant-page > * { flex-shrink: 0; }
+.assistant-page .conversation { min-height: 320px; max-height: 60dvh; }
+.conversation-history, .scoring-debug {
+  border: 1px solid $border;
+  background: #fff;
+  border-radius: 10px;
+  margin: 14px 0;
+  padding: 14px 18px;
+  summary { cursor: pointer; font-weight: 600; }
+  > p { margin-top: 12px; font-size: 13px; }
+}
+.history-toolbar { display: flex; justify-content: space-between; gap: 12px; margin: 14px 0; color: #61728d; font-size: 12px; }
+.history-list {
+  list-style: none; margin: 0; padding: 0;
+  max-height: 190px; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 20px;
+  li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+}
+.history-item {
+  flex: 1; min-width: 0; border: 1px solid transparent; background: #f7f9fc;
+  border-radius: 7px; text-align: left; padding: 10px;
+  strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  time { display: block; font-size: 11px; color: #61728d; margin-top: 5px; }
+  &[aria-current="true"] { border-color: $blue; background: #eff5ff; }
+}
+.conversation-options {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; font-size: 12px; color: #61728d;
+  label { display: flex; align-items: center; gap: 7px; color: $ink; }
+}
+.message-time { display: inline-block; margin-left: 12px; font-size: 11px; font-weight: 400; color: #61728d; }
+.search-controls { flex-wrap: wrap; }
+.search-controls > span { font-size: 12px; color: #61728d; }
+.scoring-debug { margin-top: 20px; }
+.debug-results { font-size: 12px; overflow-wrap: anywhere; p { margin: 12px 0; } }
+.debug-results table { min-width: 850px; caption { text-align: left; padding: 10px; } }
+.top-result { background: #eff5ff; }
+.timing-list { display: flex; flex-wrap: wrap; gap: 18px; div { display: flex; gap: 8px; } dd { margin: 0; font-weight: 600; } }
+@media (max-width: 760px) {
+  .document-filters, .debug-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .history-list { grid-template-columns: 1fr; }
+  .assistant-page .conversation { max-height: none; min-height: 260px; }
+  .pagination { gap: 10px; font-size: 12px; }
+  .page-heading { flex-wrap: wrap; gap: 12px; }
+}
+@media (max-width: 440px) {
+  .document-filters, .debug-controls { grid-template-columns: 1fr; }
+  .message-time { display: block; margin: 5px 0 0; }
+}

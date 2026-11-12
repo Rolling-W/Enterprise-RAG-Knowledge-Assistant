@@ -1,11 +1,15 @@
-import type { KnowledgeDocument } from "../types";
 import type {
+  DocumentDetail,
+  DocumentSummary,
+  PermissionLevel,
   SearchRequest,
-  SearchResult,
+  SearchResponse,
   UserSummary,
-  TokenResponse,
-  UploadResponse,
+  Conversation,
+  ConversationSummary,
+  ScoringDebugResponse,
 } from "../api/contracts";
+import { productRole } from "../api/adapters";
 import { fileContentType, validateFile } from "../uploadPolicy";
 import { seedDocuments } from "./data";
 
@@ -20,41 +24,81 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { "Content-Type": "application/json" },
   });
-const validationError = (field: string, msg: string) =>
-  json(
-    {
-      detail: [{ loc: ["body", field], msg, type: "value_error" }],
-    },
-    422,
-  );
+const invalid = (field: string, msg: string) =>
+  json({ detail: [{ loc: ["body", field], msg, type: "value_error" }] }, 422);
+const missing = () =>
+  json({ detail: "The requested resource is unavailable." }, 404);
+const forbidden = () =>
+  json({ detail: "Your account cannot perform this operation." }, 403);
+const now = () => new Date().toISOString();
 const delay = (ms: number) =>
   ms > 0
     ? new Promise((resolve) => globalThis.setTimeout(resolve, ms))
     : Promise.resolve();
-function canRead(document: KnowledgeDocument, user: UserSummary) {
-  return (
-    document.min_clearance <= user.clearance &&
-    (user.role === "Executive" ||
-      document.department === "Global" ||
-      document.department === user.department)
-  );
+function initialDocuments(): DocumentDetail[] {
+  return seedDocuments.map((item) => ({
+    document_id: item.document_id,
+    filename: item.filename,
+    title: item.filename,
+    content_type:
+      item.format === "PDF"
+        ? "application/pdf"
+        : item.format === "Markdown"
+          ? "text/markdown"
+          : "text/plain",
+    size_bytes: item.size_bytes,
+    permission_level: item.min_clearance as PermissionLevel,
+    creator: { user_id: "demo-seed", display_name: "Demo administrator" },
+    created_at: item.uploaded_at,
+    updated_at: item.uploaded_at,
+    status: "indexed",
+    available_actions: [],
+    preview: item.preview,
+    page_count: item.page_count,
+  }));
 }
-async function readText(file: File): Promise<string> {
-  if (file.text) return file.text();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("Unable to read the file."));
-    reader.readAsText(file);
-  });
-}
-
-// Isolated instances make tests independent of the default UI demo state.
 export function createMockTransport(options: MockOptions = {}) {
-  let documents = seedDocuments.map((document) => ({ ...document }));
+  let documents = initialDocuments();
   const sessions = new Map<string, { user: UserSummary; expiresAt: number }>();
+  const conversations = new Map<string, Conversation>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const scenarios = new Map<string, Scenario>();
+  const canRead = (document: DocumentSummary, user: UserSummary) =>
+    productRole(user.role) === "admin" || document.permission_level === 1;
+  const view = (
+    document: DocumentDetail,
+    user: UserSummary,
+  ): DocumentDetail => ({
+    ...document,
+    available_actions:
+      productRole(user.role) === "admin"
+        ? document.status === "processing" || document.status === "deleting"
+          ? ["read"]
+          : ["read", "change_permission", "reindex", "delete"]
+        : ["read"],
+  });
+  function paginate<T>(items: T[], params: URLSearchParams) {
+    const page = Math.max(1, Number(params.get("page")) || 1),
+      page_size = Math.min(
+        100,
+        Math.max(1, Number(params.get("page_size")) || 20),
+      );
+    return {
+      items: items.slice((page - 1) * page_size, page * page_size),
+      page,
+      page_size,
+      total: items.length,
+    };
+  }
+  function startProcessing(document: DocumentDetail, failed = false) {
+    document.status = "processing";
+    const timer = globalThis.setTimeout(() => {
+      document.status = failed ? "failed" : "indexed";
+      document.updated_at = now();
+      timers.delete(timer);
+    }, options.processingMs ?? 1200);
+    timers.add(timer);
+  }
   const topics: Record<string, RegExp> = {
     "doc-handbook": /leave|vacation|benefit|time off|holiday|health|allowance/i,
     "doc-remote": /remote|hybrid|home|vpn/i,
@@ -67,64 +111,79 @@ export function createMockTransport(options: MockOptions = {}) {
     path: string,
     init: RequestInit = {},
   ): Promise<Response> {
+    const url = new URL(path, "http://mock.local"),
+      route = url.pathname,
+      params = url.searchParams;
     const method = init.method ?? "GET";
     await delay(
-      path.endsWith("/search")
-        ? (options.searchLatencyMs ?? 1100)
-        : (options.latencyMs ?? 450),
+      route.endsWith("/search")
+        ? (options.searchLatencyMs ?? 350)
+        : (options.latencyMs ?? 100),
     );
-    const scenario = scenarios.get(path);
-    scenarios.delete(path);
+    const scenario = scenarios.get(route);
+    scenarios.delete(route);
     if (scenario === "offline") throw new TypeError("Network unavailable");
     if (scenario === "server-error")
       return json(
         { detail: "The service is temporarily unavailable. Please try again." },
         503,
       );
-    if (path === "/api/v1/auth/login" && method === "POST") {
-      let payload: { username?: string; password?: string };
+    let payload: Record<string, unknown> = {};
+    if (typeof init.body === "string") {
       try {
-        payload = JSON.parse(String(init.body));
+        payload = JSON.parse(init.body);
       } catch {
-        return validationError("body", "Invalid JSON");
+        return invalid("body", "Invalid JSON");
       }
-      if (
-        !payload ||
-        typeof payload.username !== "string" ||
-        !payload.username.trim()
-      )
-        return validationError("username", "Username is required");
+      if (!payload || typeof payload !== "object" || Array.isArray(payload))
+        return invalid("body", "Expected an object");
+    }
+    if (route === "/api/v1/auth/login" && method === "POST") {
+      if (typeof payload.username !== "string" || !payload.username.trim())
+        return invalid("username", "Username is required");
       if (typeof payload.password !== "string" || !payload.password.trim())
-        return validationError("password", "Password is required");
-      // Demo fixture; differs from the backend's permissive development login.
+        return invalid("password", "Password is required");
       if (payload.password !== "demo123")
         return json(
           { detail: "The email address or password is incorrect." },
           401,
         );
       const username = payload.username.trim().toLowerCase();
-      const role =
-        username === "executive@enterprise.local"
-          ? "Executive"
-          : username === "manager@enterprise.local"
-            ? "Department Manager"
-            : "Standard Staff";
+      const role = [
+        "executive@enterprise.local",
+        "admin@enterprise.local",
+      ].includes(username)
+        ? "admin"
+        : [
+              "manager@enterprise.local",
+              "staff-level1@enterprise.local",
+            ].includes(username)
+          ? "staff"
+          : "user";
       const user: UserSummary = {
-        user_id: `demo-${role}`,
+        user_id: "demo-" + username,
         username,
         role,
-        department: role === "Executive" ? "Executive" : "General",
-        clearance:
-          role === "Executive" ? 3 : role === "Department Manager" ? 2 : 1,
+        permissions:
+          role === "admin"
+            ? [
+                "document:read",
+                "document:upload",
+                "document:manage",
+                "search:debug",
+              ]
+            : role === "staff"
+              ? ["document:read", "document:upload"]
+              : ["document:read"],
       };
-      const access_token = `mock-${crypto.randomUUID()}`;
-      sessions.set(access_token, { user, expiresAt: Date.now() + 3600_000 });
+      const access_token = "mock-" + crypto.randomUUID();
+      sessions.set(access_token, { user, expiresAt: Date.now() + 3600000 });
       return json({
         access_token,
         token_type: "bearer",
         expires_in: 3600,
         user,
-      } satisfies TokenResponse);
+      });
     }
     const token =
       new Headers(init.headers).get("Authorization")?.replace(/^Bearer /, "") ??
@@ -136,126 +195,186 @@ export function createMockTransport(options: MockOptions = {}) {
         401,
       );
     const { user } = session;
-    if (path === "/api/v1/auth/logout" && method === "POST") {
+    const admin = productRole(user.role) === "admin";
+    if (route === "/api/v1/auth/logout" && method === "POST") {
       sessions.delete(token);
-      return json({ success: true });
+      return json({});
     }
-    if (path === "/api/v1/documents" && method === "GET")
-      return json({
-        documents:
-          scenario === "empty"
-            ? []
-            : documents.filter((document) => canRead(document, user)),
-      });
-    if (path.startsWith("/api/v1/documents/") && method === "GET") {
-      const document = documents.find(
+    if (route === "/api/v1/documents" && method === "GET") {
+      let items =
+        scenario === "empty"
+          ? []
+          : documents.filter((item) => canRead(item, user));
+      const level = params.get("permission_level"),
+        creator = params.get("creator_id"),
+        status = params.get("status"),
+        q = params.get("q")?.toLowerCase();
+      items = items.filter(
         (item) =>
-          item.document_id ===
-          decodeURIComponent(path.slice("/api/v1/documents/".length)),
+          (!level || item.permission_level === Number(level)) &&
+          (!creator || item.creator.user_id === creator) &&
+          (!status || item.status === status) &&
+          (!q ||
+            [item.filename, item.title, item.preview]
+              .join(" ")
+              .toLowerCase()
+              .includes(q)),
       );
-      if (!document || !canRead(document, user))
-        return json({ detail: "This document is unavailable." }, 404);
-      return json(document);
+      const sort = params.get("sort_by") ?? "updated_at",
+        direction = params.get("sort_order") === "asc" ? 1 : -1;
+      const sortValue = (item: DocumentDetail) =>
+        sort === "permission_level"
+          ? item.permission_level
+          : sort === "filename"
+            ? item.filename
+            : sort === "status"
+              ? item.status
+              : sort === "created_at"
+                ? item.created_at
+                : item.updated_at;
+      items.sort((a, b) => {
+        const x = sortValue(a),
+          y = sortValue(b);
+        return (
+          (x < y
+            ? -1
+            : x > y
+              ? 1
+              : a.document_id.localeCompare(b.document_id)) * direction
+        );
+      });
+      return json(
+        paginate(
+          items.map((item) => {
+            const {
+              preview: _preview,
+              page_count: _pages,
+              ...summary
+            } = view(item, user);
+            return summary;
+          }),
+          params,
+        ),
+      );
     }
-    if (path === "/api/v1/upload" && method === "POST") {
-      if (user.role === "Standard Staff")
-        return json({ detail: "Your role cannot upload documents." }, 403);
-      const file = init.body instanceof FormData ? init.body.get("file") : null;
+    const docMatch = route.match(
+      /^\/api\/v1\/documents\/([^/]+)(?:\/(permissions|reindex))?$/,
+    );
+    if (docMatch) {
+      const document = documents.find(
+        (item) => item.document_id === decodeURIComponent(docMatch[1]),
+      );
+      if (!document || !canRead(document, user)) return missing();
+      const action = docMatch[2];
+      if (method === "GET" && !action) return json(view(document, user));
+      if (!admin) return forbidden();
+      if (document.status === "processing" || document.status === "deleting")
+        return json(
+          {
+            detail: "The document is being processed. Try again when complete.",
+          },
+          409,
+        );
+      if (method === "PATCH" && action === "permissions") {
+        if (![1, 2, 3].includes(payload.permission_level as number))
+          return invalid("permission_level", "Choose Level 1, 2 or 3");
+        document.permission_level = payload.permission_level as PermissionLevel;
+        document.updated_at = now();
+        return json(view(document, user));
+      }
+      if (method === "POST" && action === "reindex") {
+        startProcessing(document);
+        return json(
+          { document_id: document.document_id, status: "processing" },
+          202,
+        );
+      }
+      if (method === "DELETE" && !action) {
+        documents = documents.filter((item) => item !== document);
+        return new Response(null, { status: 204 });
+      }
+    }
+    if (route === "/api/v1/upload" && method === "POST") {
+      if (!user.permissions?.includes("document:upload")) return forbidden();
+      const body = init.body instanceof FormData ? init.body : null;
+      const file = body?.get("file");
       if (!(file instanceof File))
-        return validationError("file", "Choose a file to upload");
+        return invalid("file", "Choose a file to upload");
+      const rawLevel = body?.get("permission_level"),
+        level =
+          rawLevel === null || rawLevel === undefined ? 1 : Number(rawLevel);
+      if (![1, 2, 3].includes(level))
+        return invalid("permission_level", "Choose Level 1, 2 or 3");
+      if (!admin && level !== 1) return forbidden();
       const error = validateFile(file);
       if (error) return json({ detail: error }, 400);
-      if (
-        !["application/pdf", "text/markdown", "text/plain"].includes(file.type)
-      )
-        return json(
-          { detail: "Only PDF, Markdown, and plain text files are supported." },
-          400,
-        );
-      if (file.name.toLowerCase().includes("upload-error"))
+      if (file.name.includes("upload-error"))
         return json(
           { detail: "The upload could not be completed. Please try again." },
           503,
         );
-      const type = fileContentType(file)!;
-      const document: KnowledgeDocument = {
-        document_id: `doc-${crypto.randomUUID()}`,
+      const readText = () =>
+        file.text
+          ? file.text()
+          : new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result));
+              reader.readAsText(file);
+            });
+      const document: DocumentDetail = {
+        document_id: "doc-" + crypto.randomUUID(),
         filename: file.name,
-        format:
-          type === "application/pdf"
-            ? "PDF"
-            : type === "text/markdown"
-              ? "Markdown"
-              : "Text",
+        title: file.name,
+        content_type: fileContentType(file)!,
         size_bytes: file.size,
-        department: user.department,
-        min_clearance: user.clearance,
-        uploaded_at: new Date().toISOString(),
+        permission_level: level as PermissionLevel,
+        creator: {
+          user_id: user.user_id,
+          display_name: user.username.split("@")[0],
+        },
+        created_at: now(),
+        updated_at: now(),
         status: "processing",
-        description: "Uploaded document.",
+        available_actions: [],
         preview:
-          type === "application/pdf"
-            ? "A text preview is not available for this document."
-            : (await readText(file)).slice(0, 16000),
+          fileContentType(file) === "application/pdf"
+            ? "A text preview is not available for this demo PDF."
+            : (await readText()).slice(0, 16000),
       };
-      documents = [document, ...documents];
-      const timer = globalThis.setTimeout(() => {
-        document.status = file.name.toLowerCase().includes("processing-error")
-          ? "failed"
-          : "ready";
-        timers.delete(timer);
-      }, options.processingMs ?? 2200);
-      timers.add(timer);
-      return json(
-        {
-          document_id: document.document_id,
-          filename: file.name,
-          content_type: type,
-          size_bytes: file.size,
-          status: "queued",
-          message: `Document queued for ${user.department} with clearance ${user.clearance}`,
-        } satisfies UploadResponse,
-        202,
-      );
+      documents.unshift(document);
+      startProcessing(document, file.name.includes("processing-error"));
+      return json(view(document, user), 202);
     }
-    if (path === "/api/v1/search" && method === "POST") {
-      let payload: SearchRequest;
-      try {
-        payload = JSON.parse(String(init.body));
-      } catch {
-        return validationError("body", "Invalid JSON");
-      }
-      if (
-        !payload ||
-        typeof payload.query !== "string" ||
-        !payload.query.trim() ||
-        payload.query.length > 500
-      )
-        return validationError(
-          "query",
-          "Enter a question between 1 and 500 characters",
-        );
+    if (
+      (route === "/api/v1/search" || route === "/api/v1/search/debug") &&
+      method === "POST"
+    ) {
+      if (route.endsWith("/debug") && !admin) return forbidden();
       const {
         query,
         top_k = 5,
         search_mode = "hybrid",
         filters = {},
-      } = payload;
+      } = payload as unknown as SearchRequest;
+      if (typeof query !== "string" || !query.trim() || query.length > 500)
+        return invalid(
+          "query",
+          "Enter a question between 1 and 500 characters",
+        );
       if (!Number.isInteger(top_k) || top_k < 1 || top_k > 20)
-        return validationError("top_k", "Must be between 1 and 20");
+        return invalid("top_k", "Must be between 1 and 20");
       if (!["hybrid", "semantic", "keyword"].includes(search_mode))
-        return validationError("search_mode", "Invalid search mode");
+        return invalid("search_mode", "Invalid search mode");
       if (
         !filters ||
         typeof filters !== "object" ||
         Array.isArray(filters) ||
-        Object.values(filters).some((value) => typeof value !== "string")
+        Object.values(filters).some(
+          (item) => !["string", "number"].includes(typeof item),
+        )
       )
-        return validationError(
-          "filters",
-          "Expected an object with string values",
-        );
-      if (query.trim().toLowerCase() === "[error]")
+        return invalid("filters", "Expected string or numeric filters");
+      if (query === "[error]")
         return json(
           {
             detail:
@@ -263,58 +382,218 @@ export function createMockTransport(options: MockOptions = {}) {
           },
           503,
         );
-      // Fictional retrieval fixtures; uploaded files are not indexed.
       const matches =
         scenario === "empty"
           ? []
           : documents.filter(
-              (document) =>
-                canRead(document, user) &&
-                document.status === "ready" &&
-                (!filters.department ||
-                  document.department === filters.department) &&
-                topics[document.document_id]?.test(query),
+              (item) =>
+                canRead(item, user) &&
+                item.status === "indexed" &&
+                (!filters.permission_level ||
+                  Number(filters.permission_level) === item.permission_level) &&
+                (topics[item.document_id]?.test(query) ||
+                  (!topics[item.document_id] &&
+                    item.preview?.toLowerCase().includes(query.toLowerCase()))),
             );
-      const pages: Record<string, number> = {
+      const pageNumbers: Record<string, number> = {
         "doc-handbook": 12,
         "doc-onboarding": 3,
         "doc-manager": 7,
         "doc-strategy": 4,
       };
-      const results: SearchResult[] = matches
-        .slice(0, top_k)
-        .map((document) => ({
-          document_id: document.document_id,
-          chunk_id: `${document.document_id}-chunk-1`,
-          title: document.filename,
-          content: document.preview.split("\n\n").slice(2).join("\n\n"),
+      if (route.endsWith("/debug")) {
+        const limit = payload.candidate_limit ?? 20;
+        if (
+          !Number.isInteger(limit) ||
+          Number(limit) < 1 ||
+          Number(limit) > 100
+        )
+          return invalid("candidate_limit", "Must be between 1 and 100");
+        const result: ScoringDebugResponse = {
+          query,
+          search_mode,
+          top_k,
+          stages:
+            search_mode === "hybrid"
+              ? ["bm25", "dense", "rrf"]
+              : search_mode === "keyword"
+                ? ["bm25"]
+                : ["dense"],
+          candidates: matches.slice(0, Number(limit)).map((item, index) => ({
+            document_id: item.document_id,
+            chunk_id: item.document_id + "-chunk-1",
+            permission_level: item.permission_level,
+            final_rank: index + 1,
+            scores: {
+              bm25_raw: search_mode === "semantic" ? null : 4.21,
+              bm25_rank: search_mode === "semantic" ? null : index + 1,
+              dense_raw: search_mode === "keyword" ? null : 0.82,
+              dense_rank: search_mode === "keyword" ? null : index + 1,
+              fusion: search_mode === "hybrid" ? 0.0325 : null,
+              rerank: null,
+              final:
+                search_mode === "hybrid"
+                  ? 0.0325
+                  : search_mode === "keyword"
+                    ? 4.21
+                    : 0.82,
+            },
+          })),
+          timings_ms: {
+            authorization_filter: 1,
+            ...(search_mode !== "semantic" ? { bm25: 7 } : {}),
+            ...(search_mode !== "keyword" ? { dense: 8 } : {}),
+            ...(search_mode === "hybrid" ? { fusion: 1 } : {}),
+            total: 18,
+          },
+          request_id: "req-" + crypto.randomUUID(),
+        };
+        return json(result);
+      }
+      const result: SearchResponse = {
+        query,
+        search_mode,
+        total: Math.min(matches.length, top_k),
+        elapsed_ms: 18,
+        request_id: "req-" + crypto.randomUUID(),
+        results: matches.slice(0, top_k).map((item) => ({
+          document_id: item.document_id,
+          chunk_id: item.document_id + "-chunk-1",
+          title: item.title,
+          content: item.preview ?? "",
           score: 0.92,
-          content_type:
-            document.format === "PDF"
-              ? "application/pdf"
-              : document.format === "Markdown"
-                ? "text/markdown"
-                : "text/plain",
-          department_id: document.department,
-          clearance_level: document.min_clearance,
+          content_type: item.content_type,
+          permission_level: item.permission_level,
           citation: {
             page:
-              document.format === "PDF"
-                ? (pages[document.document_id] ?? 1)
+              item.content_type === "application/pdf"
+                ? (pageNumbers[item.document_id] ?? 1)
                 : null,
             line_start: null,
             line_end: null,
           },
-        }));
-      return json({
-        query,
-        search_mode,
-        results,
-        total: results.length,
-        request_id: `req-${crypto.randomUUID()}`,
-      });
+        })),
+      };
+      return json(result);
     }
-    return json({ detail: "The requested resource is unavailable." }, 404);
+    if (route === "/api/v1/conversations") {
+      if (method === "GET") {
+        const items: ConversationSummary[] = [...conversations.values()]
+          .filter((item) => item.owner_id === user.user_id)
+          .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+          .map(
+            ({ messages: _messages, owner_id: _owner, ...summary }) => summary,
+          );
+        return json(paginate(scenario === "empty" ? [] : items, params));
+      }
+      if (method === "POST") {
+        const conversation: Conversation = {
+          conversation_id: "conv-" + crypto.randomUUID(),
+          owner_id: user.user_id,
+          title: typeof payload.title === "string" ? payload.title : null,
+          created_at: now(),
+          updated_at: now(),
+          messages: [],
+        };
+        conversations.set(conversation.conversation_id, conversation);
+        const {
+          messages: _messages,
+          owner_id: _owner,
+          ...summary
+        } = conversation;
+        return json(summary, 201);
+      }
+    }
+    const chatMatch = route.match(
+      /^\/api\/v1\/conversations\/([^/]+)(?:\/(messages))?$/,
+    );
+    if (chatMatch) {
+      const conversation = conversations.get(decodeURIComponent(chatMatch[1]));
+      if (!conversation || conversation.owner_id !== user.user_id)
+        return missing();
+      if (method === "GET" && !chatMatch[2]) {
+        return json({
+          ...conversation,
+          messages: conversation.messages.map((message) => {
+            const citations = message.citations.map((citation) => {
+              const document = documents.find(
+                (item) => item.document_id === citation.document_id,
+              );
+              return !document || !canRead(document, user)
+                ? {
+                    ...citation,
+                    title: "Unavailable source",
+                    unavailable: true,
+                  }
+                : citation;
+            });
+            return {
+              ...message,
+              content:
+                message.role === "assistant" &&
+                citations.some((item) => item.unavailable)
+                  ? "Some source material is no longer available. Ask again to retrieve currently permitted information."
+                  : message.content,
+              citations,
+            };
+          }),
+        });
+      }
+      if (method === "DELETE" && !chatMatch[2]) {
+        conversations.delete(conversation.conversation_id);
+        return new Response(null, { status: 204 });
+      }
+      if (method === "POST" && chatMatch[2]) {
+        if (
+          typeof payload.content !== "string" ||
+          !payload.content.trim() ||
+          payload.content.length > 500
+        )
+          return invalid(
+            "content",
+            "Enter a message between 1 and 500 characters",
+          );
+        const search = await handler("/api/v1/search", {
+          method: "POST",
+          headers: init.headers,
+          body: JSON.stringify({ query: payload.content }),
+        });
+        if (!search.ok) return search;
+        // Re-check ownership after asynchronous retrieval: deletion may have happened in flight.
+        if (!conversations.has(conversation.conversation_id)) return missing();
+        const results: SearchResponse = await search.json();
+        const sequence = conversation.messages.length + 1;
+        conversation.messages.push(
+          {
+            message_id: "msg-" + crypto.randomUUID(),
+            sequence,
+            role: "user",
+            content: payload.content,
+            created_at: now(),
+            citations: [],
+          },
+          {
+            message_id: "msg-" + crypto.randomUUID(),
+            sequence: sequence + 1,
+            role: "assistant",
+            content: results.results.length
+              ? results.results.map((item) => item.content).join("\n\n")
+              : "I couldn’t find supporting information in the documents available to your account.",
+            created_at: now(),
+            citations: results.results.map((item) => ({
+              document_id: item.document_id,
+              chunk_id: item.chunk_id,
+              title: item.title,
+              permission_level: item.permission_level!,
+              ...item.citation,
+            })),
+          },
+        );
+        conversation.updated_at = now();
+        return json({ messages: conversation.messages.slice(-2) });
+      }
+    }
+    return missing();
   }
   return {
     handler,
@@ -324,10 +603,10 @@ export function createMockTransport(options: MockOptions = {}) {
       timers.clear();
       sessions.clear();
       scenarios.clear();
-      documents = seedDocuments.map((document) => ({ ...document }));
+      conversations.clear();
+      documents = initialDocuments();
     },
   };
 }
-
 export const mockTransport = createMockTransport();
 export const mockHandler = mockTransport.handler;

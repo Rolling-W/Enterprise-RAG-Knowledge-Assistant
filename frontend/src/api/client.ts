@@ -6,8 +6,16 @@ import type {
   SearchResponse,
   TokenResponse,
   UploadResponse,
+  DocumentQuery,
+  DocumentDetail,
+  DocumentSummary,
+  PaginatedDocuments,
+  PermissionLevel,
+  ScoringDebugResponse,
+  Conversation,
+  ConversationSummary,
+  Page,
 } from "./contracts";
-import type { KnowledgeDocument } from "../types";
 
 export class ApiError extends Error {
   constructor(
@@ -111,34 +119,88 @@ export function createApiClient(options: ClientOptions) {
       options.mode === "mock"
         ? request("/api/v1/auth/logout", { method: "POST" }, token)
         : Promise.resolve(),
-    // Proposed document endpoints are available only in mock mode for now.
-    documents: (token: string) =>
-      options.mode === "mock"
-        ? request<{ documents: KnowledgeDocument[] }>(
-            "/api/v1/documents",
-            {},
-            token,
-          )
-        : Promise.reject(
-            new ApiError(
-              "The document library is not available yet. You can still upload documents.",
-              501,
-            ),
-          ),
+    documents: (token: string, params: DocumentQuery = {}) => {
+      const query = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== "") query.set(key, String(value));
+      });
+      return request<PaginatedDocuments>(
+        `/api/v1/documents${query.size ? `?${query}` : ""}`,
+        {},
+        token,
+      );
+    },
     document: (id: string, token: string) =>
-      options.mode === "mock"
-        ? request<KnowledgeDocument>(
-            `/api/v1/documents/${encodeURIComponent(id)}`,
-            {},
-            token,
-          )
-        : Promise.reject(
-            new ApiError(
-              "The full document preview is not available yet.",
-              501,
-            ),
-          ),
-    upload: (file: File, token: string, permissionLevel?: number) => {
+      request<DocumentDetail>(
+        `/api/v1/documents/${encodeURIComponent(id)}`,
+        {},
+        token,
+      ),
+    changePermission: (
+      id: string,
+      permission_level: PermissionLevel,
+      token: string,
+    ) =>
+      request<DocumentSummary>(
+        `/api/v1/documents/${encodeURIComponent(id)}/permissions`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ permission_level }),
+        },
+        token,
+      ),
+    reindexDocument: (id: string, token: string) =>
+      request<{ document_id: string; status: "processing" }>(
+        `/api/v1/documents/${encodeURIComponent(id)}/reindex`,
+        { method: "POST" },
+        token,
+      ),
+    deleteDocument: (id: string, token: string) =>
+      request<void>(
+        `/api/v1/documents/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+        token,
+      ),
+    conversations: (token: string, page = 1) =>
+      request<Page<ConversationSummary>>(
+        `/api/v1/conversations?page=${page}&page_size=20`,
+        {},
+        token,
+      ),
+    createConversation: (token: string, title?: string) =>
+      request<ConversationSummary>(
+        "/api/v1/conversations",
+        { method: "POST", body: JSON.stringify({ title }) },
+        token,
+      ),
+    conversation: (id: string, token: string) =>
+      request<Conversation>(
+        `/api/v1/conversations/${encodeURIComponent(id)}`,
+        {},
+        token,
+      ),
+    sendMessage: (id: string, content: string, token: string) =>
+      request<unknown>(
+        `/api/v1/conversations/${encodeURIComponent(id)}/messages`,
+        { method: "POST", body: JSON.stringify({ content }) },
+        token,
+      ),
+    deleteConversation: (id: string, token: string) =>
+      request<void>(
+        `/api/v1/conversations/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+        token,
+      ),
+    debugSearch: (
+      params: SearchRequest & { candidate_limit?: number },
+      token: string,
+    ) =>
+      request<ScoringDebugResponse>(
+        "/api/v1/search/debug",
+        { method: "POST", body: JSON.stringify(params) },
+        token,
+      ),
+    upload: (file: File, token: string, permissionLevel?: PermissionLevel) => {
       const body = new FormData();
       // Browsers may omit Markdown MIME; the backend validates content_type.
       body.append(

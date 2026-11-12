@@ -24,12 +24,14 @@ export interface Citation {
   id: string;
   document_id: string;
   title: string;
-  score: number;
+  score?: number;
   page?: number;
   line_start?: number;
   line_end?: number;
   section?: string;
   content: string;
+  permission_level?: 1 | 2 | 3;
+  unavailable?: boolean;
 }
 export interface AssistantResponse {
   answer: string;
@@ -43,6 +45,8 @@ export interface Message {
   citations?: Citation[];
   failed?: boolean;
   search_mode?: SearchMode;
+  created_at?: string;
+  sequence?: number;
 }
 export interface PreviewSelection {
   documentId: string;
