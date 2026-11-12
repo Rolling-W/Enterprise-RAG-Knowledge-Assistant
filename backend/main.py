@@ -401,6 +401,151 @@ def require_manage_permission(
     return user
 
 
+def _generate_conversation_answer(
+    *,
+    conversation_id: str,
+    current_user: AuthenticatedUser,
+    db: Session,
+    message_id: str | None = None,
+) -> ConversationMessageResponse:
+
+
+    # Step 1: Verify conversation ownership.
+    conversation = get_conversation(
+        db,
+        conversation_id=conversation_id,
+        owner_id=current_user.user_id,
+    )
+
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+
+    
+    # Step 2: Identify the user message to answer.
+    messages = list_conversation_messages(
+        db,
+        conversation_id=conversation_id,
+        owner_id=current_user.user_id,
+    )
+
+    if not messages:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No unanswered user message found",
+        )
+
+    if message_id is not None:
+        # Answer the exact message submitted by this request.
+        target_message = next(
+            (
+                item
+                for item in messages
+                if item.message_id == message_id
+            ),
+            None,
+        )
+    else:
+        # Preserve the existing retry behavior.
+        target_message = messages[-1]
+
+    if target_message is None or target_message.role != "user":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No unanswered user message found",
+        )
+
+    question = target_message.content.strip()
+
+    if len(question) > 500:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Question exceeds the 500-character search limit",
+        )
+
+    # Step 3: Reuse the existing authorized Search Pipeline.
+    search_response = search(
+        payload=SearchRequest(
+            query=question,
+            top_k=5,
+            search_mode="hybrid",
+        ),
+        user=current_user,
+        db=db,
+    )
+
+    # Step 4: Build context from authorized search results.
+    context_parts = []
+    citations = []
+
+    for index, result in enumerate(search_response.results, start=1):
+        context_parts.append(
+            f"[Source {index}]\n"
+            f"Document: {result.title}\n"
+            f"Content:\n{result.content}"
+        )
+
+        citations.append(
+            {
+                "document_id": result.document_id,
+                "chunk_id": result.chunk_id,
+                "title": result.title,
+                "permission_level": result.permission_level,
+                "page": result.citation.page,
+                "line_start": result.citation.line_start,
+                "line_end": result.citation.line_end,
+            }
+        )
+
+    context = "\n\n---\n\n".join(context_parts)
+
+    # Step 5: Generate a grounded answer.
+    try:
+        answer = generate_answer(
+            question=question,
+            context=context,
+        )
+    except Exception as exc:
+        logger.exception("Answer generation failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Answer generation service is unavailable",
+        ) from exc
+
+    # Step 6: Persist the assistant message and retrieved sources.
+    message = add_assistant_message(
+        db,
+        conversation_id=conversation_id,
+        owner_id=current_user.user_id,
+        content=answer,
+        citations=citations,
+    )
+
+    if message is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+
+    # Step 7: Return the persisted assistant message.
+    return ConversationMessageResponse(
+        message_id=message.message_id,
+        sequence=message.sequence,
+        role="assistant",
+        content=message.content,
+        created_at=message.created_at,
+        citations=[
+            ConversationCitationResponse(
+                **citation,
+                unavailable=False,
+            )
+            for citation in citations
+        ],
+    )
+
+
 def document_to_summary(
     document: Document,
     *,
@@ -617,16 +762,26 @@ def get_conversation_endpoint(
 def add_message_endpoint(
     conversation_id: str,
     payload: AddMessageRequest,
-    current_user: AuthenticatedUser = Depends(require_user),
+    current_user: AuthenticatedUser = Depends(require_read_permission),
     db: Session = Depends(get_db),
 ) -> ConversationMessageResponse:
 
-    if not payload.content.strip():
+    question = payload.content.strip()
+
+    # Validate before persisting the user message.
+    if not question:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Message content cannot be empty",
         )
 
+    if len(question) > 500:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Question exceeds the 500-character search limit",
+        )
+
+    # Step 1: Persist the user message.
     message = add_user_message(
         db,
         conversation_id=conversation_id,
@@ -640,6 +795,15 @@ def add_message_endpoint(
             detail="Conversation not found",
         )
 
+    # Step 2: Generate an answer for this exact user message.
+    _generate_conversation_answer(
+        conversation_id=conversation_id,
+        current_user=current_user,
+        db=db,
+        message_id=message.message_id,
+    )
+
+    # Step 3: Preserve the existing response contract.
     return ConversationMessageResponse(
         message_id=message.message_id,
         sequence=message.sequence,
@@ -661,119 +825,10 @@ def generate_conversation_answer_endpoint(
     current_user: AuthenticatedUser = Depends(require_read_permission),
     db: Session = Depends(get_db),
 ) -> ConversationMessageResponse:
-
-    # Step 1: Verify conversation ownership.
-    conversation = get_conversation(
-        db,
+    return _generate_conversation_answer(
         conversation_id=conversation_id,
-        owner_id=current_user.user_id,
-    )
-
-    if conversation is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Conversation not found",
-        )
-
-    # Step 2: Find the latest user message.
-    messages = list_conversation_messages(
-        db,
-        conversation_id=conversation_id,
-        owner_id=current_user.user_id,
-    )
-
-    if not messages or messages[-1].role != "user":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="No unanswered user message found",
-        )
-
-    question = messages[-1].content.strip()
-
-    if len(question) > 500:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Question exceeds the 500-character search limit",
-        )
-
-    # Step 3: Reuse the existing authorized Search Pipeline.
-    search_response = search(
-        payload=SearchRequest(
-            query=question,
-            top_k=5,
-            search_mode="hybrid",
-        ),
-        user=current_user,
+        current_user=current_user,
         db=db,
-    )
-
-    # Step 4: Build context from authorized search results.
-    context_parts = []
-    citations = []
-
-    for index, result in enumerate(search_response.results, start=1):
-        context_parts.append(
-            f"[Source {index}]\n"
-            f"Document: {result.title}\n"
-            f"Content:\n{result.content}"
-        )
-
-        citations.append(
-            {
-                "document_id": result.document_id,
-                "chunk_id": result.chunk_id,
-                "title": result.title,
-                "permission_level": result.permission_level,
-                "page": result.citation.page,
-                "line_start": result.citation.line_start,
-                "line_end": result.citation.line_end,
-            }
-        )
-
-    context = "\n\n---\n\n".join(context_parts)
-
-    # Step 5: Generate a grounded answer.
-    try:
-        answer = generate_answer(
-            question=question,
-            context=context,
-        )
-    except Exception as exc:
-        logger.exception("Answer generation failed")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Answer generation service is unavailable",
-        ) from exc
-
-    # Step 6: Persist the assistant message and retrieved sources.
-    message = add_assistant_message(
-        db,
-        conversation_id=conversation_id,
-        owner_id=current_user.user_id,
-        content=answer,
-        citations=citations,
-    )
-
-    if message is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Conversation not found",
-        )
-
-    # Step 7: Return the persisted assistant message.
-    return ConversationMessageResponse(
-        message_id=message.message_id,
-        sequence=message.sequence,
-        role="assistant",
-        content=message.content,
-        created_at=message.created_at,
-        citations=[
-            ConversationCitationResponse(
-                **citation,
-                unavailable=False,
-            )
-            for citation in citations
-        ],
     )
 
 
