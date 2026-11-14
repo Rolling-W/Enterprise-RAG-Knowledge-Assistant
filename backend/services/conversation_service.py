@@ -226,6 +226,7 @@ def add_assistant_message(
                     chunk_id=citation["chunk_id"],
                     title=citation["title"],
                     permission_level=citation["permission_level"],
+                    score=citation["score"],
                     page=citation.get("page"),
                     line_start=citation.get("line_start"),
                     line_end=citation.get("line_end"),

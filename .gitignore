@@ -9,6 +9,7 @@ venv/
 .env
 .env.*
 !frontend/.env.example
+!.env.example
 
 # Node / React
 node_modules/

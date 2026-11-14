@@ -73,6 +73,11 @@ export interface DocumentDetail extends DocumentSummary {
   preview?: string;
   page_count?: number;
 }
+export interface ChunkPreviewResponse {
+  document_id: string;
+  chunk_id: string;
+  content: string;
+}
 export interface DocumentQuery {
   page?: number;
   page_size?: number;
@@ -155,6 +160,7 @@ export interface ConversationCitation extends SourceLocation {
   title: string;
   permission_level: PermissionLevel;
   unavailable?: boolean;
+  score: number | null;
 }
 export interface ConversationMessage {
   message_id: string;

@@ -74,6 +74,7 @@ export function toMessages(
       citations: message.citations.map((citation) => ({
         id: citation.chunk_id,
         document_id: citation.document_id,
+        score: citation.score ?? undefined,
         title: citation.unavailable ? "Unavailable source" : citation.title,
         permission_level: citation.permission_level,
         unavailable: citation.unavailable,

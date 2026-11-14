@@ -146,7 +146,7 @@ class ApiIntegrationTests(unittest.TestCase):
                     200,
                     response.text,
                 )
-                
+
                 results = response.json()["results"]
 
                 # Staff can read a General department document
@@ -594,6 +594,54 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(citations[0]["permission_level"], 1)
         self.assertTrue(citations[0]["chunk_id"])
 
+        # Verify that the retrieval score survives conversation persistence.
+        self.assertIn("score", citations[0])
+        self.assertIsInstance(citations[0]["score"], (int, float))
+        self.assertFalse(citations[0]["unavailable"])
+
+        # Step 5: Revoke the manager's access by raising the document to L3.
+        original_score = citations[0]["score"]
+        executive_headers = self.login("executive@enterprise.local")
+
+        response = self.client.patch(
+            f"/api/v1/documents/{document_id}/permissions",
+            headers=executive_headers,
+            json={"permission_level": 3},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        # Step 6: Reload the conversation as the original manager.
+        response = self.client.get(
+            f"/api/v1/conversations/{conversation_id}",
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        revoked_citation = response.json()["messages"][1]["citations"][0]
+
+        self.assertTrue(revoked_citation["unavailable"])
+        self.assertIsNone(revoked_citation["score"])
+
+        # Step 7: Restore L1 access and verify the original score survives.
+        response = self.client.patch(
+            f"/api/v1/documents/{document_id}/permissions",
+            headers=executive_headers,
+            json={"permission_level": 1},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        response = self.client.get(
+            f"/api/v1/conversations/{conversation_id}",
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        restored_citation = response.json()["messages"][1]["citations"][0]
+
+        self.assertFalse(restored_citation["unavailable"])
+        self.assertEqual(restored_citation["score"], original_score)
+
+
 
     def test_conversation_generation_failure_and_retry(self):
         headers = self.login()
@@ -667,6 +715,101 @@ class ApiIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(messages[1]["content"], expected_answer)
         self.assertGreaterEqual(len(messages[1]["citations"]), 1)
+
+
+    def test_citation_chunk_preview(self):
+        # Upload a document using an authorized account.
+        headers = self.login()
+        document_id = self.upload(headers)
+
+        # Find the actual chunk ID through the Search API.
+        search_response = self.client.post(
+            "/api/v1/search",
+            headers=headers,
+            json={
+                "query": "annual leave",
+                "search_mode": "hybrid",
+            },
+        )
+
+        self.assertEqual(search_response.status_code, 200)
+        chunk_id = search_response.json()["results"][0]["chunk_id"]
+
+        # Authorized user should receive the original chunk.
+        response = self.client.get(
+            f"/api/v1/documents/{document_id}/chunks/{chunk_id}",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["document_id"], document_id)
+        self.assertEqual(response.json()["chunk_id"], chunk_id)
+        self.assertIn("23 days", response.json()["content"])
+
+        # Unauthenticated requests must be rejected.
+        unauthorized = self.client.get(
+            f"/api/v1/documents/{document_id}/chunks/{chunk_id}"
+        )
+        self.assertEqual(unauthorized.status_code, 401)
+
+        # Unknown chunks must not expose document content.
+        missing = self.client.get(
+            f"/api/v1/documents/{document_id}/chunks/unknown_chunk",
+            headers=headers,
+        )
+        self.assertEqual(missing.status_code, 404)
+
+
+    def test_citation_chunk_preview_department_isolation(self):
+        # Executive uploads a document to the Executive department.
+        executive_headers = self.login(
+            "executive@enterprise.local"
+        )
+        document_id = self.upload(executive_headers)
+
+        # Executive retrieves the actual chunk ID.
+        search_response = self.client.post(
+            "/api/v1/search",
+            headers=executive_headers,
+            json={
+                "query": "annual leave",
+                "search_mode": "hybrid",
+            },
+        )
+
+        self.assertEqual(
+            search_response.status_code, 200,
+            search_response.text,
+        )
+        chunk_id = search_response.json()["results"][0]["chunk_id"]
+
+        # Executive can access the chunk.
+        url = f"/api/v1/documents/{document_id}/chunks/{chunk_id}"
+
+        executive_response = self.client.get(
+            url,
+            headers=executive_headers,
+        )
+        self.assertEqual(executive_response.status_code, 200)
+
+        # Manager belongs to a different department.
+        manager_headers = self.login(
+            "manager@enterprise.local"
+        )
+
+        manager_response = self.client.get(
+            url,
+            headers=manager_headers,
+        )
+
+        # Cross-department access must be denied.
+        self.assertEqual(
+            manager_response.status_code,
+            404,
+            manager_response.text,
+        )
+
+
 
 
 

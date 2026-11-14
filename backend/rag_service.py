@@ -660,6 +660,51 @@ def search_debug(
     return ranked, stages, timings
 
 
+def get_chunk_content(
+    client: QdrantClient,
+    *,
+    document_id: str,
+    chunk_id: str,
+) -> str | None:
+    """Retrieve the content of one specific document chunk."""
+
+    if not document_id or not chunk_id:
+        raise ValueError("Document ID and Chunk ID are required")
+
+    chunk_filter = models.Filter(
+        must=[
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchValue(value=document_id),
+            ),
+            models.FieldCondition(
+                key="chunk_id",
+                match=models.MatchValue(value=chunk_id),
+            ),
+        ]
+    )
+
+    points, _ = client.scroll(
+        collection_name=COLLECTION_NAME,
+        scroll_filter=chunk_filter,
+        limit=2,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    if not points:
+        return None
+
+    if len(points) > 1:
+        raise RuntimeError("Duplicate document chunk found")
+
+    content = (points[0].payload or {}).get("content")
+
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    return content
+
 
 def _keyword_search(
     client: QdrantClient,

@@ -271,6 +271,34 @@ export function createMockTransport(options: MockOptions = {}) {
         ),
       );
     }
+    const chunkMatch = route.match(
+      /^\/api\/v1\/documents\/([^/]+)\/chunks\/([^/]+)$/,
+    );
+
+    if (chunkMatch && method === "GET") {
+      const documentId = decodeURIComponent(chunkMatch[1]);
+      const chunkId = decodeURIComponent(chunkMatch[2]);
+
+      const document = documents.find(
+        (item) => item.document_id === documentId,
+      );
+
+      if (
+        !document ||
+        !canRead(document, user) ||
+        document.status !== "indexed" ||
+        chunkId !== `${documentId}-chunk-1` ||
+        !document.preview
+      ) {
+        return missing();
+      }
+
+      return json({
+        document_id: documentId,
+        chunk_id: chunkId,
+        content: document.preview,
+      });
+    }
     const docMatch = route.match(
       /^\/api\/v1\/documents\/([^/]+)(?:\/(permissions|reindex))?$/,
     );
@@ -604,6 +632,7 @@ export function createMockTransport(options: MockOptions = {}) {
               title: item.title,
               permission_level: item.permission_level!,
               ...item.citation,
+              score: item.score,
             })),
           },
         );

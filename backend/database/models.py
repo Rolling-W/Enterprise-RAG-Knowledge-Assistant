@@ -5,6 +5,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Float,
     Integer,
     LargeBinary,
     String,
@@ -141,6 +142,11 @@ class MessageCitation(Base):
 
     permission_level: Mapped[int] = mapped_column(
         Integer,
+        nullable=False,
+    )
+
+    score: Mapped[float] = mapped_column(
+        Float,
         nullable=False,
     )
 

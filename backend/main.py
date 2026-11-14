@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from backend.database.connection import get_db
 from backend.database.models import Document
 from backend.rag_service import search_debug as retrieve_debug
+from backend.rag_service import get_chunk_content
 from backend.services.answer_generation_service import generate_answer
 from backend.services.conversation_service import (
     create_conversation,
@@ -59,6 +60,12 @@ logger = logging.getLogger(__name__)
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class ChunkPreviewResponse(BaseModel):
+    document_id: str
+    chunk_id: str
+    content: str
 
 
 class UserSummary(BaseModel):
@@ -255,6 +262,7 @@ class ConversationCitationResponse(BaseModel):
     chunk_id: str
     title: str
     permission_level: int = Field(ge=1, le=3)
+    score: float | None
     page: int | None = None
     line_start: int | None = None
     line_end: int | None = None
@@ -423,7 +431,7 @@ def _generate_conversation_answer(
             detail="Conversation not found",
         )
 
-    
+
     # Step 2: Identify the user message to answer.
     messages = list_conversation_messages(
         db,
@@ -493,6 +501,7 @@ def _generate_conversation_answer(
                 "chunk_id": result.chunk_id,
                 "title": result.title,
                 "permission_level": result.permission_level,
+                "score": result.score,
                 "page": result.citation.page,
                 "line_start": result.citation.line_start,
                 "line_end": result.citation.line_end,
@@ -569,6 +578,35 @@ def document_to_summary(
         status=document.status,
         available_actions=available_actions,
     )
+
+
+def get_document_actions(
+    document: Document,
+    current_user: AuthenticatedUser,
+) -> list[str]:
+    """Calculate available document actions for the current user."""
+
+    actions = []
+
+    if document.status == "indexed":
+        actions.append("read")
+
+    if current_user.role != "admin":
+        return actions
+
+    if document.permission_update_target is not None:
+        return actions
+
+    if document.status == "indexed":
+        actions.append("change_permission")
+
+    if document.status in ("indexed", "failed"):
+        actions.append("reindex")
+
+    if document.status in ("indexed", "failed", "deleting"):
+        actions.append("delete")
+
+    return actions
 
 
 @app.get("/", include_in_schema=False)
@@ -719,6 +757,7 @@ def get_conversation_endpoint(
                 else "Unavailable source"
             ),
             permission_level=citation.permission_level,
+            score=citation.score if is_available else None,
             page=citation.page,
             line_start=citation.line_start,
             line_end=citation.line_end,
@@ -1045,26 +1084,20 @@ def list_documents_endpoint(
         q=q,
     )
 
+
     items = []
+
     for document in documents:
-        actions = []
-
-        if document.status == "indexed":
-            actions.append("read")
-
-        if (
-            current_user.role == "admin"
-            and document.status in ("indexed", "failed")
-            and document.permission_update_target is None
-        ):
-            actions.append("reindex")
-
         items.append(
             document_to_summary(
                 document,
-                available_actions=actions,
+                available_actions=get_document_actions(
+                    document,
+                    current_user,
+                ),
             )
         )
+
 
     return DocumentListResponse(
         items=items,
@@ -1123,21 +1156,94 @@ def get_document_detail(
                 detail="Document not found",
             )
 
-    actions = []
 
-    if document.status == "indexed":
-        actions.append("read")
-
-    if (
-        current_user.role == "admin"
-        and document.status in ("indexed", "failed")
-        and document.permission_update_target is None
-    ):
-        actions.append("reindex")
+    actions = get_document_actions(
+        document,
+        current_user,
+    )
 
     return document_to_summary(
         document,
         available_actions=actions,
+    )
+
+
+@app.get(
+    "/api/v1/documents/{document_id}/chunks/{chunk_id}",
+    response_model=ChunkPreviewResponse,
+    tags=["documents"],
+)
+def get_document_chunk_preview(
+    document_id: str,
+    chunk_id: str,
+    current_user: AuthenticatedUser = Depends(
+        require_read_permission
+    ),
+    db: Session = Depends(get_db),
+) -> ChunkPreviewResponse:
+    """Return an authorized document chunk for citation preview."""
+
+    # Step 1: Verify document existence in PostgreSQL.
+    document = db.get(Document, document_id)
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Source not found",
+        )
+
+    # Step 2: Verify clearance level.
+    if document.permission_level > current_user.clearance:
+        raise HTTPException(
+            status_code=404,
+            detail="Source not found",
+        )
+
+    # Step 3: Verify department access.
+    if current_user.role != "admin":
+        if document.department_id not in (
+            current_user.department,
+            "Global",
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail="Source not found",
+            )
+
+    # Step 4: Only expose indexed, stable documents.
+    if (
+        document.status != "indexed"
+        or document.permission_update_target is not None
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Source not found",
+        )
+
+    # Step 5: Retrieve the specific chunk from Qdrant.
+    try:
+        content = get_chunk_content(
+            create_client(),
+            document_id=document_id,
+            chunk_id=chunk_id,
+        )
+    except Exception as exc:
+        logger.exception("Citation preview retrieval failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Source preview service is unavailable",
+        ) from exc
+
+    if content is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Source not found",
+        )
+
+    return ChunkPreviewResponse(
+        document_id=document_id,
+        chunk_id=chunk_id,
+        content=content,
     )
 
 
@@ -1299,10 +1405,15 @@ def update_document_permissions(
             detail="Document permission update is unavailable",
         ) from exc
 
+
     return document_to_summary(
         updated_document,
-        available_actions=["read", "reindex"],
+        available_actions=get_document_actions(
+            updated_document,
+            user,
+        ),
     )
+
 
 
 @app.post(

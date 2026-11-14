@@ -6,6 +6,16 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_storage:/qdrant/storage
+  postgres:
+    image: postgres:16
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: erag
+      POSTGRES_PASSWORD: erag_local
+      POSTGRES_DB: erag
+    volumes:
+      - postgres_storage:/var/lib/postgresql/data
 
   backend:
     build: ./backend
@@ -32,3 +42,4 @@ services:
 
 volumes:
   qdrant_storage:
+  postgres_storage:

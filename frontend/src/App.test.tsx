@@ -32,6 +32,7 @@ beforeEach(() => {
     "upload",
     "documents",
     "document",
+    "documentChunk",
     "changePermission",
     "deleteDocument",
     "reindexDocument",
