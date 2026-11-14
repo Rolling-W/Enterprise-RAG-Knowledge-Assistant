@@ -15,7 +15,7 @@ def parse_uploaded_document(
     content: bytes,
     document_id: str,
     department: str,
-    min_clearance: int,
+    permission_level: int,
 ) -> list[DocumentChunk]:
     """Convert uploaded document bytes into structured chunks."""
 
@@ -46,7 +46,7 @@ def parse_uploaded_document(
             elements=elements,
             document_id=document_id,
             department=department,
-            min_clearance=min_clearance,
+            permission_level=permission_level,
         )
 
     return chunks

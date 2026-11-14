@@ -9,6 +9,7 @@ venv/
 .env
 .env.*
 !frontend/.env.example
+!.env.example
 
 # Node / React
 node_modules/
@@ -30,3 +31,8 @@ Thumbs.db
 htmlcov/
 
 # Local Test Documents
+sample_data/2022學生手冊中文版.pdf
+sample_data/technical_document_postgreSQL.pdf
+
+# Local Test Outputs
+scripts/retrieval_results.csv

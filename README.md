@@ -44,28 +44,90 @@ Enterprise-RAG-Knowledge-Assistant/
     └── Dockerfile
 ```
 
+
 ## 🚀 Quick Start (Local Setup)
+
+
+### 1. Install Dependencies
+
+Requires Python 3.11, Node.js/npm, and Docker.
 
 ```bash
 # Clone the repository
 git clone https://github.com/Rolling-W/Enterprise-RAG-Knowledge-Assistant.git
 cd Enterprise-RAG-Knowledge-Assistant
 
-# Run the full stack with Docker Compose
-docker compose up --build
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+
+cd frontend
+npm install
+cd ..
 ```
 
-Once the stack is up:
-- Backend API: http://localhost:8000
-- Frontend UI: http://localhost:5173
-- Qdrant Dashboard: http://localhost:6333/dashboard
 
-Provision the Qdrant collection and RBAC payload indexes explicitly after
-Qdrant is running:
+### 2. Configure Environment
 
 ```bash
+cp .env.example .env
+```
+
+Edit `.env` and replace `YOUR_OPENAI_API_KEY` with your own OpenAI API key.
+
+### 3. Start PostgreSQL & Qdrant
+
+```bash
+docker compose up -d postgres qdrant
+```
+
+### 4. Initialize Databases
+
+Load environment variables in the terminal:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+Run database migrations and initialize Qdrant:
+
+```bash
+alembic upgrade head
 python -m backend.init_qdrant
 ```
+
+### 5. Start Backend
+
+In the same terminal:
+
+```bash
+python -m uvicorn backend.main:app --reload
+```
+
+Backend: http://localhost:8000
+
+### 6. Start Frontend
+
+Open another terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Frontend: http://localhost:5173
+
+Qdrant Dashboard: http://localhost:6333/dashboard
+
+### Notes
+
+- Never commit `.env` or real API keys.
+- Run `alembic upgrade head` after pulling database schema changes.
+- OpenAI API access is required for LLM-generated answers.
+- Department-based document access control is pending Sprint 5 policy alignment.
+
 
 ## 🔍 Sample API
 

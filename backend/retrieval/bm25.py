@@ -38,7 +38,7 @@ class BM25Retriever:
                 )
                 and (
                     clearance_level is None
-                    or chunk.min_clearance <= clearance_level
+                    or chunk.permission_level <= clearance_level
                 )
             )
         ]

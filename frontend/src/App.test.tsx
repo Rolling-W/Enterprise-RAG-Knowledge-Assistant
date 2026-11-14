@@ -32,6 +32,7 @@ beforeEach(() => {
     "upload",
     "documents",
     "document",
+    "documentChunk",
     "changePermission",
     "deleteDocument",
     "reindexDocument",
@@ -192,7 +193,7 @@ describe("Sprint 4 frontend workflows", () => {
     ).toBeInTheDocument();
     expect(api.logout).not.toHaveBeenCalled();
   });
-  it("shows only Level 1 uploads and read actions to staff; ordinary users are read-only", async () => {
+  it("allows managers Level 2 reads but only Level 1 uploads; ordinary users are read-only", async () => {
     await signIn();
     await documents();
     expect(
@@ -203,7 +204,7 @@ describe("Sprint 4 frontend workflows", () => {
     expect(
       screen.queryByRole("button", { name: /Delete Employee/ }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText("Manager_Playbook.pdf")).not.toBeInTheDocument();
+    expect(screen.getByText("Manager_Playbook.pdf")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
     await userEvent.click(screen.getByRole("button", { name: "User" }));
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -435,7 +436,7 @@ describe("Sprint 4 frontend workflows", () => {
     ).not.toBeInTheDocument();
   });
   it("marks revoked citations unavailable on restore without displaying cached source content", async () => {
-    await signIn();
+    await signIn("User");
     await ask();
     await screen.findByRole("button", { name: /Employee_Handbook.pdf/ });
     const admin = await client.login("executive@enterprise.local", "demo123");

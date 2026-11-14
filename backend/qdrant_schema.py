@@ -17,7 +17,7 @@ PAYLOAD_SCHEMA = {
     "document_id": models.PayloadSchemaType.KEYWORD,
     "chunk_id": models.PayloadSchemaType.KEYWORD,
     "department_id": models.PayloadSchemaType.KEYWORD,
-    "clearance_level": models.PayloadSchemaType.INTEGER,
+    "permission_level": models.PayloadSchemaType.INTEGER,
     "content_type": models.PayloadSchemaType.KEYWORD,
     "title": models.PayloadSchemaType.KEYWORD,
     "content": models.PayloadSchemaType.TEXT,
@@ -32,7 +32,7 @@ def access_filter(
 ) -> models.Filter:
     """Return the payload filter that must run before vector search/ranking."""
     clearance_condition = models.FieldCondition(
-        key="clearance_level",
+        key="permission_level",
         range=models.Range(lte=clearance_level),
     )
     if is_executive:

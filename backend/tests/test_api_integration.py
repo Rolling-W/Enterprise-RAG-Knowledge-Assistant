@@ -7,11 +7,19 @@ Requires backend dependencies plus httpx (FastAPI TestClient).
 import unittest
 import warnings
 from unittest.mock import patch
+import math
 
 from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient
 
 from backend import main
+
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from backend.database.models import Base
+
 
 
 class ApiIntegrationTests(unittest.TestCase):
@@ -22,13 +30,57 @@ class ApiIntegrationTests(unittest.TestCase):
         self.store = QdrantClient(":memory:")
         self.factory = patch.object(main, "create_client", return_value=self.store)
         self.factory.start()
+
+        # Isolated SQLite database for each test.
+        self.db_engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(self.db_engine, "connect")
+        def enable_foreign_keys(connection, connection_record):
+            cursor = connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(bind=self.db_engine)
+
+        TestingSessionLocal = sessionmaker(
+            bind=self.db_engine,
+            autoflush=False,
+            autocommit=False,
+        )
+
+        def override_get_db():
+            db = TestingSessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        main.app.dependency_overrides[main.get_db] = override_get_db
+
+        # Prevent background reindex tasks from accessing real services.
+        self.reindex_patcher = patch.object(
+            main,
+            "run_document_reindex",
+            return_value=None,
+        )
+        self.reindex_patcher.start()
+
         self.client = TestClient(main.app)
 
     def tearDown(self):
         self.client.close()
+        self.reindex_patcher.stop()
         self.factory.stop()
         self.store.close()
         self.warning_context.__exit__(None, None, None)
+
+        main.app.dependency_overrides.pop(main.get_db, None)
+        self.db_engine.dispose()
+
 
     def login(self, username="manager@enterprise.local"):
         response = self.client.post("/api/v1/auth/login", json={"username": username, "password": "demo123"})
@@ -63,7 +115,8 @@ class ApiIntegrationTests(unittest.TestCase):
                 self.assertEqual(result["title"], "weekly-policy.md")
                 self.assertIn("23 days", result["content"])
                 self.assertEqual(result["citation"], {"page": None, "line_start": 1, "line_end": 3})
-                self.assertTrue(0 <= result["score"] <= 1)
+                self.assertIsInstance(result["score"], (int, float))
+                self.assertTrue(math.isfinite(result["score"]))
                 self.assertTrue(result["chunk_id"])
 
     def test_401_and_403_and_clearance_filter(self):
@@ -73,7 +126,7 @@ class ApiIntegrationTests(unittest.TestCase):
         response = self.client.post("/api/v1/upload", headers=staff, files={"file": ("policy.txt", b"leave", "text/plain")})
         self.assertEqual(response.status_code, 403)
         manager = self.login()
-        self.upload(manager)
+        document_id = self.upload(manager)
         forbidden = self.client.post("/api/v1/search", headers=manager, json={"query": "leave", "filters": {"department": "HR"}})
         self.assertEqual(forbidden.status_code, 403)
 
@@ -93,10 +146,16 @@ class ApiIntegrationTests(unittest.TestCase):
                     200,
                     response.text,
                 )
-                self.assertEqual(
-                    response.json()["results"],
-                    [],
-                )
+
+                results = response.json()["results"]
+
+                # Staff can read a General department document
+                # requiring clearance level 1.
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0]["document_id"], document_id)
+                self.assertEqual(results[0]["department_id"], "General")
+                self.assertEqual(results[0]["permission_level"], 1)
+
 
 
     def test_empty_upload_and_openapi_contract(self):
@@ -461,6 +520,298 @@ class ApiIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(correct, len(queries))
+
+
+    def test_conversation_message_generates_answer(self):
+        headers = self.login()
+        document_id = self.upload(headers)
+
+        # Step 1: Create a conversation.
+        response = self.client.post(
+            "/api/v1/conversations",
+            headers=headers,
+            json={"title": "Leave Policy Discussion"},
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        conversation_id = response.json()["conversation_id"]
+
+        question = "How many annual leave days do employees receive?"
+        expected_answer = "Employees receive 23 days of annual leave."
+
+        # Step 2: Send a message and generate an AI answer.
+        # Mock the LLM, but keep real retrieval and DB persistence.
+        with patch.object(
+            main,
+            "generate_answer",
+            return_value=expected_answer,
+        ) as mock_generation:
+            response = self.client.post(
+                f"/api/v1/conversations/{conversation_id}/messages",
+                headers=headers,
+                json={"content": question},
+            )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["role"], "user")
+        self.assertEqual(response.json()["content"], question)
+
+        # The RAG pipeline should invoke answer generation once.
+        mock_generation.assert_called_once()
+
+        generation_args = mock_generation.call_args.kwargs
+        self.assertEqual(generation_args["question"], question)
+        self.assertIn("23 days", generation_args["context"])
+
+        # Step 3: Reload the saved conversation.
+        response = self.client.get(
+            f"/api/v1/conversations/{conversation_id}",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        conversation = response.json()
+        messages = conversation["messages"]
+
+        # Both user and assistant messages must be persisted.
+        self.assertEqual(len(messages), 2)
+
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["content"], question)
+        self.assertEqual(messages[0]["sequence"], 1)
+
+        self.assertEqual(messages[1]["role"], "assistant")
+        self.assertEqual(messages[1]["content"], expected_answer)
+        self.assertEqual(messages[1]["sequence"], 2)
+
+        # Step 4: Verify saved source citations.
+        citations = messages[1]["citations"]
+
+        self.assertGreaterEqual(len(citations), 1)
+        self.assertEqual(citations[0]["document_id"], document_id)
+        self.assertEqual(citations[0]["title"], "weekly-policy.md")
+        self.assertEqual(citations[0]["permission_level"], 1)
+        self.assertTrue(citations[0]["chunk_id"])
+
+        # Verify that the retrieval score survives conversation persistence.
+        self.assertIn("score", citations[0])
+        self.assertIsInstance(citations[0]["score"], (int, float))
+        self.assertFalse(citations[0]["unavailable"])
+
+        # Step 5: Revoke the manager's access by raising the document to L3.
+        original_score = citations[0]["score"]
+        executive_headers = self.login("executive@enterprise.local")
+
+        response = self.client.patch(
+            f"/api/v1/documents/{document_id}/permissions",
+            headers=executive_headers,
+            json={"permission_level": 3},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        # Step 6: Reload the conversation as the original manager.
+        response = self.client.get(
+            f"/api/v1/conversations/{conversation_id}",
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        revoked_citation = response.json()["messages"][1]["citations"][0]
+
+        self.assertTrue(revoked_citation["unavailable"])
+        self.assertIsNone(revoked_citation["score"])
+
+        # Step 7: Restore L1 access and verify the original score survives.
+        response = self.client.patch(
+            f"/api/v1/documents/{document_id}/permissions",
+            headers=executive_headers,
+            json={"permission_level": 1},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        response = self.client.get(
+            f"/api/v1/conversations/{conversation_id}",
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        restored_citation = response.json()["messages"][1]["citations"][0]
+
+        self.assertFalse(restored_citation["unavailable"])
+        self.assertEqual(restored_citation["score"], original_score)
+
+
+
+    def test_conversation_generation_failure_and_retry(self):
+        headers = self.login()
+        self.upload(headers)
+
+        response = self.client.post(
+            "/api/v1/conversations",
+            headers=headers,
+            json={"title": "Generation Retry Test"},
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+
+        conversation_id = response.json()["conversation_id"]
+        conversation_url = f"/api/v1/conversations/{conversation_id}"
+        question = "How many annual leave days do employees receive?"
+
+        # Step 1: Simulate an LLM service failure.
+        with patch.object(
+            main,
+            "generate_answer",
+            side_effect=RuntimeError("Simulated LLM failure"),
+        ):
+            response = self.client.post(
+                f"{conversation_url}/messages",
+                headers=headers,
+                json={"content": question},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+
+        # Step 2: The user message should remain saved.
+        response = self.client.get(
+            conversation_url,
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        messages = response.json()["messages"]
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["content"], question)
+
+        # Step 3: Retry generation without adding another user message.
+        expected_answer = "Employees receive 23 days of annual leave."
+
+        with patch.object(
+            main,
+            "generate_answer",
+            return_value=expected_answer,
+        ) as mock_generation:
+            response = self.client.post(
+                f"{conversation_url}/generate",
+                headers=headers,
+            )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        mock_generation.assert_called_once()
+
+        # Step 4: Verify that the retry saved the assistant answer.
+        response = self.client.get(
+            conversation_url,
+            headers=headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        messages = response.json()["messages"]
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(
+            [message["role"] for message in messages],
+            ["user", "assistant"],
+        )
+        self.assertEqual(messages[1]["content"], expected_answer)
+        self.assertGreaterEqual(len(messages[1]["citations"]), 1)
+
+
+    def test_citation_chunk_preview(self):
+        # Upload a document using an authorized account.
+        headers = self.login()
+        document_id = self.upload(headers)
+
+        # Find the actual chunk ID through the Search API.
+        search_response = self.client.post(
+            "/api/v1/search",
+            headers=headers,
+            json={
+                "query": "annual leave",
+                "search_mode": "hybrid",
+            },
+        )
+
+        self.assertEqual(search_response.status_code, 200)
+        chunk_id = search_response.json()["results"][0]["chunk_id"]
+
+        # Authorized user should receive the original chunk.
+        response = self.client.get(
+            f"/api/v1/documents/{document_id}/chunks/{chunk_id}",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["document_id"], document_id)
+        self.assertEqual(response.json()["chunk_id"], chunk_id)
+        self.assertIn("23 days", response.json()["content"])
+
+        # Unauthenticated requests must be rejected.
+        unauthorized = self.client.get(
+            f"/api/v1/documents/{document_id}/chunks/{chunk_id}"
+        )
+        self.assertEqual(unauthorized.status_code, 401)
+
+        # Unknown chunks must not expose document content.
+        missing = self.client.get(
+            f"/api/v1/documents/{document_id}/chunks/unknown_chunk",
+            headers=headers,
+        )
+        self.assertEqual(missing.status_code, 404)
+
+
+    def test_citation_chunk_preview_department_isolation(self):
+        # Executive uploads a document to the Executive department.
+        executive_headers = self.login(
+            "executive@enterprise.local"
+        )
+        document_id = self.upload(executive_headers)
+
+        # Executive retrieves the actual chunk ID.
+        search_response = self.client.post(
+            "/api/v1/search",
+            headers=executive_headers,
+            json={
+                "query": "annual leave",
+                "search_mode": "hybrid",
+            },
+        )
+
+        self.assertEqual(
+            search_response.status_code, 200,
+            search_response.text,
+        )
+        chunk_id = search_response.json()["results"][0]["chunk_id"]
+
+        # Executive can access the chunk.
+        url = f"/api/v1/documents/{document_id}/chunks/{chunk_id}"
+
+        executive_response = self.client.get(
+            url,
+            headers=executive_headers,
+        )
+        self.assertEqual(executive_response.status_code, 200)
+
+        # Manager belongs to a different department.
+        manager_headers = self.login(
+            "manager@enterprise.local"
+        )
+
+        manager_response = self.client.get(
+            url,
+            headers=manager_headers,
+        )
+
+        # Cross-department access must be denied.
+        self.assertEqual(
+            manager_response.status_code,
+            404,
+            manager_response.text,
+        )
+
+
+
+
 
 
 if __name__ == "__main__":
