@@ -17,10 +17,10 @@ gate; record the run ID, build/commit, and evidence when executed.
 | RBAC-03 | Upload validation | Upload with level 0, 4, or non-integer value | 422; no catalog/vector record created |
 | RBAC-04 | Upload boundary | Staff uploads level 1, then attempts level 2/3 | Level 1 succeeds; level 2/3 returns 403; no restricted record created |
 | RBAC-05 | Role boundary | User attempts upload and all management routes | 403; no state changes |
-| RBAC-06 | Search visibility | Seed matching docs at levels 1, 2, 3; search as each role | Admin sees 1/2/3; staff and user see only level 1 |
-| RBAC-07 | Search paths | Repeat RBAC-06 with keyword, dense/semantic, and hybrid search | Same authorized document set in every mode; filter runs before ranking/snippet creation |
-| RBAC-08 | Caller filters | Staff requests level 2/3 or another user's restricted department | Filter narrows to empty or returns 403; never expands visibility |
-| RBAC-09 | Metadata disclosure | Request list, search, debug, or direct detail for a restricted document | No title, creator, citation, count, content, or existence leak; detail is indistinguishable from absent (404) |
+| RBAC-06 | Search visibility | Seed matching documents at levels 1, 2, and 3 across Finance, Engineering, and Global departments; search as each role | Admin sees levels 1–3 across all departments; staff sees levels 1–2 in their own department and Global; user sees level 1 in their own department and Global only |
+| RBAC-07 | Search paths | Repeat RBAC-06 with keyword, dense/semantic, and hybrid search | Same role-authorized document set in every mode; filter runs before ranking/snippet creation |
+| RBAC-08 | Caller filters | Staff requests level 3; user requests level 2/3; callers attempt to widen their authorized scope | Unauthorized levels return an empty set or 403; filters never expand visibility |
+| RBAC-09 | Metadata disclosure | Request list, search, debug, or direct detail for a document above the caller's authorized level | No title, creator, citation, count, content, or existence leak; inaccessible detail is indistinguishable from absent (404) |
 | DOC-01 | Listing | List with pagination, each supported sort, status, creator, permission level, and text query | Stable ordering, correct totals/pages; all results remain authorized |
 | DOC-02 | Detail | Read an authorized document and an absent/restricted ID | Authorized DTO includes level, creator, timestamps, status, and server actions; both inaccessible cases return same 404 |
 | DOC-03 | Permission change | Admin changes level 1 to 2 and back; staff/user attempt change | Admin update is reflected in catalog and every chunk before success; other roles get 403 |
@@ -31,7 +31,7 @@ gate; record the run ID, build/commit, and evidence when executed.
 | CHAT-01 | Persistence | Create conversation and append user/assistant messages with citations | Owner, timestamps, order, and citation IDs/coordinates persist |
 | CHAT-02 | Restore | Load an existing conversation after new messages | Messages restore in stable sequence and citations point to the same source chunk/coordinates |
 | CHAT-03 | Ownership/delete | Another user loads/deletes conversation; owner deletes it | Non-owner receives 404; owner gets 204 and messages are removed |
-| CHAT-04 | Citation access drift | Revoke a cited document after conversation save, then restore conversation | Message remains ordered; inaccessible source is marked unavailable and its content is not exposed |
+| CHAT-04 | Citation access drift | Staff saves a conversation citing a level 2 document; admin reclassifies the document to level 3; staff restores the conversation | Message remains ordered; citation is marked unavailable without exposing restricted source information |
 | INT-01 | Cross-layer contract | Upload, list, search, detail, change permission, re-index, delete; create and restore conversation | API DTOs and UI agree on fields/actions; no stale citation or action after state changes |
 
 ## Integration/security execution record

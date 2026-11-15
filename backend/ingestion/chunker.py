@@ -11,7 +11,7 @@ class DocumentChunker:
         elements: list[DocumentElement],
         document_id: str,
         department: str,
-        min_clearance: int,
+        permission_level: int,
         max_words: int = 400,
         overlap_words: int = 50,
     ) -> list[DocumentChunk]:
@@ -58,7 +58,7 @@ class DocumentChunker:
                         current_elements,
                         document_id,
                         department,
-                        min_clearance,
+                        permission_level,
                     )
                 )
 
@@ -71,7 +71,7 @@ class DocumentChunker:
                         current_elements,
                         document_id,
                         department,
-                        min_clearance,
+                        permission_level,
                     )
                 )
 
@@ -94,7 +94,7 @@ class DocumentChunker:
                     current_elements,
                     document_id,
                     department,
-                    min_clearance,
+                    permission_level,
                 )
             )
 
@@ -133,7 +133,7 @@ class DocumentChunker:
         elements: list[DocumentElement],
         document_id: str,
         department: str,
-        min_clearance: int,
+        permission_level: int,
     ) -> DocumentChunk:
 
         content = "\n\n".join(
@@ -204,7 +204,7 @@ class DocumentChunker:
                 element.element_id for element in elements
             ],
             department=department,
-            min_clearance=min_clearance,
+            permission_level=permission_level,
             line_start=min(line_starts) if has_complete_line_metadata else None,
             line_end=max(line_ends) if has_complete_line_metadata else None,
         )
@@ -317,7 +317,7 @@ class DocumentChunker:
                         + next_chunk.element_ids
                     ),
                     department=current.department,
-                    min_clearance=current.min_clearance,
+                    permission_level=current.permission_level,
                     line_start=(
                         min(current.line_start, next_chunk.line_start)
                         if has_complete_line_metadata

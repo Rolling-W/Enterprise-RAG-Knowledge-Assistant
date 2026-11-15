@@ -31,7 +31,7 @@ export const searchFixture: SearchResponse = {
       content: "Employees receive 20 days of annual leave.",
       content_type: "application/pdf",
       department_id: "HR",
-      clearance_level: 1,
+      permission_level: 1,
       citation: { page: 12, line_start: 45, line_end: 49 },
     },
   ],

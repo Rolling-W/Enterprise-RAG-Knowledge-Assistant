@@ -31,15 +31,35 @@ cannot set or override them in a request body, query string, or upload form.
 | Action / visibility | Admin | Staff | User |
 | --- | :---: | :---: | :---: |
 | Read/search level 1 | Yes | Yes | Yes |
-| Read/search level 2 or 3 | Yes | No | No |
+| Read/search level 2 | Yes | Yes | No |
+| Read/search level 3 | Yes | No | No |
 | Upload | Yes (levels 1–3) | Yes (level 1 only) | No |
-| List and view document metadata | All documents | Level 1 only | Level 1 only |
+| List and view document metadata | All documents | Levels 1–2 | Level 1 only |
 | Change permission level | Yes | No | No |
 | Re-index or delete | Yes | No | No |
 | View scoring debug details | Yes | No | No |
 
-`staff` can access level 1 documents and cannot access level 2 or 3 documents.
-The `user` role has the same visibility ceiling and fewer management actions.
+`staff` can access level 1 and level 2 documents, but cannot access
+level 3 documents. Staff may upload level 1 documents only.
+
+`user` can access level 1 documents only and cannot upload documents.
+
+### Department-Based Visibility
+
+Sprint 4 preserves the department-based filtering implemented in Sprint 3.
+
+- Admin can access authorized documents across all departments.
+- Staff can access level 1–2 documents belonging to their own
+  department or the Global department.
+- User can access level 1 documents belonging to their own
+  department or the Global department.
+- Staff can upload level 1 documents only.
+- Department visibility and permission-level restrictions must both
+  be enforced before search ranking and result generation.
+- Missing or invalid required access-control metadata must deny access.
+- Advanced cross-department sharing and custom department permissions
+  are deferred to future sprints.
+
 For the repository's current demo identities, the target adapter mapping is
 `Executive` → `admin`, `Department Manager` → `staff`, and `Standard Staff` →
 `user`. This mapping is a role translation only: all non-admin users have the
@@ -55,9 +75,13 @@ same level-1 visibility ceiling. The adapter must not use the old numeric
   ranking, snippet construction, citation generation, or debug serialization.
   Repeat the check before returning document details or changing/deleting a
   document; do not rely on a filtered list or a hidden UI button.
-- Visibility predicate: `admin OR document.permission_level = 1`. Staff and
-  user do not receive level 2/3 results. A caller-supplied filter may narrow
-  this set but may never widen it.
+- Visibility predicate:
+  - `admin`: permission_level in 1..3
+  - `staff`: permission_level in 1..2
+  - `user`: permission_level = 1
+  - Caller-supplied filters may narrow visibility but never widen it.
+  Staff and user do not receive level 2/3 results. A caller-supplied filter
+  may narrow this set but may never widen it.
 - Do not disclose existence, title, creator, counts, citations, or filter
   reasons for a document the caller cannot see. Return the same not-found
   response for an absent document and an inaccessible document.

@@ -17,8 +17,8 @@ export interface UserSummary {
   user_id: string;
   username: string;
   role: Role;
-  department?: string;
-  clearance?: number;
+  department: string;
+  clearance: number;
   permissions?: string[];
 }
 export interface TokenResponse {
@@ -73,6 +73,11 @@ export interface DocumentDetail extends DocumentSummary {
   preview?: string;
   page_count?: number;
 }
+export interface ChunkPreviewResponse {
+  document_id: string;
+  chunk_id: string;
+  content: string;
+}
 export interface DocumentQuery {
   page?: number;
   page_size?: number;
@@ -95,6 +100,7 @@ export interface SourceLocation {
   line_start: number | null;
   line_end: number | null;
 }
+
 export interface SearchResult {
   document_id: string;
   chunk_id: string;
@@ -104,9 +110,10 @@ export interface SearchResult {
   content_type: string;
   department_id?: string;
   clearance_level?: number;
-  citation: SourceLocation;
   permission_level?: PermissionLevel;
+  citation: SourceLocation;
 }
+
 export interface SearchResponse {
   query: string;
   search_mode: SearchMode;
@@ -153,6 +160,7 @@ export interface ConversationCitation extends SourceLocation {
   title: string;
   permission_level: PermissionLevel;
   unavailable?: boolean;
+  score: number | null;
 }
 export interface ConversationMessage {
   message_id: string;

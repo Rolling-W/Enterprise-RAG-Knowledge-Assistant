@@ -13,7 +13,7 @@ export interface KnowledgeDocument {
   format: "PDF" | "Markdown" | "Text";
   size_bytes: number;
   department: string;
-  min_clearance: number;
+  min_clearance: 1 | 2 | 3;
   uploaded_at: string;
   status: "processing" | "ready" | "failed";
   description: string;
