@@ -1,13 +1,14 @@
 # Sprint 4 frontend delivery
 
-Date: November 12, 2026. Baseline: main at 5e21045.
-This document records frontend implementation and its backend dependencies.
-It does not replace the cross-layer release gates in sprint-4-acceptance.md.
+Review update: November 14, 2026. Frontend implementation baseline: current
+`main` includes Sprint 4 frontend work. This document records what the UI
+currently does and what must change to meet the unified access contract. It
+does not replace the cross-layer release gates in sprint-4-acceptance.md.
 
 ## Implemented
 
 - Upload permission selector: Level 1 default, admin Levels 1-3, staff Level 1,
-  user read-only. Multipart requests include permission_level.
+  user read-only. Multipart requests include `permission_level`.
 - Real document API client and library: server pagination, sorting, title/filename/
   keyword query, level/creator/status filters, details, permission changes,
   re-index, confirmed deletion and processing polling. Mutation buttons use
@@ -52,24 +53,32 @@ Development shortcuts (password demo123):
 | Staff | manager@enterprise.local | staff | Level 1 / Level 1 upload |
 | Admin | executive@enterprise.local | admin | Levels 1-3 / Levels 1-3 upload |
 
-The current backend still returns legacy identity names and uses the older
-clearance policy. Its identity and authorization implementation must be updated
-to the product roles above. A UI mapping cannot enforce the new server policy.
+The frontend currently has no department selector for uploads. Its demo and
+mock identities also retain a `clearance` field, while the canonical contract
+uses user `clearance_level`, document `permission_level`, and document
+`department_id` as separate attributes. The frontend must send and display the
+document department only after the backend publishes the authorized choices
+and validates assignments. A UI mapping cannot enforce the access policy.
 
 Mock catalog/history are in browser memory and reset on a full reload. They
 remain available across page navigation and signing in again within the same
 mock runtime. Persistent storage across restarts belongs to the backend.
 Login itself remains in memory, so a browser reload requires signing in again.
 
-## Integration requirements for Ray
+## Cross-layer alignment requirements
 
-Implement the routes and authorization in docs/api-spec.md:
+Reconcile the merged backend routes and frontend with docs/api-spec.md:
 
-- Upload must validate/store permission_level and return the assigned level.
-  The old upload backend ignores the new multipart field and derives clearance
-  from the token; the frontend cannot guarantee Level 1 behavior against it.
-- GET documents returns items/page/page_size/total. Summary fields include
-  permission_level, creator, created_at, updated_at, status and available_actions.
+- Upload must validate/store `permission_level` and `department_id`, returning
+  both assigned document values. The backend derives user `clearance_level`
+  from the authenticated identity and compares it with document level. The
+  merged backend currently assigns the uploader's department automatically;
+  the upload DTO has no department selector. The exact allowed department
+  choices for non-admin uploaders remain unresolved.
+- GET documents is implemented on merged main and returns paginated catalog
+  data. The target summary includes
+  `department_id`, `permission_level`, creator, timestamps, status, and
+  `available_actions`.
   Detail may supply preview as an authorized plain-text excerpt; original PDF
   download/render/navigation is not defined by the current API contract.
 - PATCH permissions, POST reindex and DELETE document must update all stores

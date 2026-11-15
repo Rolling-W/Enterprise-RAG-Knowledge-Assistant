@@ -1,49 +1,43 @@
-# Domain Context
+# Enterprise RAG Knowledge Assistant
 
-## Terms
+This context defines the project's identity, document-access, and retrieval language so API, backend, frontend, and acceptance work use the same concepts.
 
-### User
+## Identity and access
 
-A person authenticated by the identity provider. A User receives a signed
-clearance token and is assigned exactly one application role for a session.
+**User**:
+A person authenticated to the application with one product role and a user clearance level.
+_Avoid_: account as a synonym for an authenticated person
 
-### Role
+**Product role**:
+The user's operation class: `admin`, `staff`, or `user`.
+_Avoid_: display title as authorization, client role
 
-The coarse-grained set of actions a User may perform. The initial roles are
-Executive, Department Manager, and Standard Staff.
+**User clearance**:
+The maximum document sensitivity level the user may read, derived from the authenticated role.
+_Avoid_: document clearance, user permission level
 
-### Clearance
+**Document permission level**:
+The sensitivity classification assigned to one document, independent of its uploader and department.
+_Avoid_: document clearance
 
-The numeric sensitivity level carried by a User's token: 3 for Executive, 2
-for Department Manager, and 1 for Standard Staff. A document is returned only
-when the User's clearance satisfies the document policy.
+**Department scope**:
+The organizational audience assigned to a document and checked separately from its permission level.
+_Avoid_: sensitivity level, clearance
 
-### Permission
+**Operation permission**:
+An action granted to a product role, such as `document:read` or `document:upload`.
+_Avoid_: clearance, permission level
 
-An action granted by a Role, such as `document:read` or `document:upload`.
-Permissions control operations; clearance controls the sensitivity of data
-visible to a User.
+**Clearance token**:
+The authenticated credential carrying server-issued identity and authorization claims.
+_Avoid_: client-provided role or access claims
 
-### Document
+## Knowledge sources
 
-An ingested enterprise file with an owning department and a minimum clearance
-policy. The upload actor's role must come from the authenticated User, never
-from an untrusted form field.
+**Document**:
+An ingested source with its own permission level and department scope; indexed chunks inherit both access attributes.
+_Avoid_: chunk as the access-control owner
 
-### Clearance token
-
-A short-lived, signed JWT containing the User identity, Role, department,
-clearance, permissions, issuer, timestamps, and a unique token identifier.
-Clients present it as `Authorization: Bearer <token>`; clients do not edit
-authorization claims.
-
-## Invariants
-
-- Every protected search or upload request has a valid, unexpired token.
-- A Standard Staff User can read only documents permitted at clearance 1 and
-  cannot upload or manage documents.
-- A Department Manager can read and upload documents for the assigned
-  department but cannot manage global access policy.
-- An Executive can read, upload, and manage documents across departments.
-- Role and clearance are server-issued claims and are not accepted from
-  request bodies or multipart form fields.
+**Citation**:
+A reference from an answer to a chunk and its source location, subject to a fresh access check when displayed.
+_Avoid_: proof of current access

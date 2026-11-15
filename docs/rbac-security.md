@@ -1,85 +1,105 @@
-# Document Permission Model and RBAC
+# Authorization and Document Visibility
 
-This document defines the Sprint 4 authorization contract. The API server is
-the authority for both operation permissions and document visibility. A UI
-may hide unavailable actions, but it must not make authorization decisions.
+This document is the authorization source of truth for the demo roles. The API
+derives the caller's identity and permissions from the authenticated session.
+Frontend controls are presentation only; every protected operation is checked
+by the server.
 
-## Permission levels
+## Terms and independent access dimensions
 
-`permission_level` is a document sensitivity classification, not a user role
-or an operation permission.
+- `clearance_level` belongs to the authenticated user. It is the highest
+  document permission level that user may read.
+- `permission_level` belongs to a document. It classifies that document's
+  sensitivity and is stored with its catalog record and indexed chunks.
+- The server compares the user's `clearance_level` with the document's
+  `permission_level`. Do not put both values on one entity or use one as a
+  synonym for the other.
+- `department_id` belongs to a document. It identifies the department scope
+  assigned to that document; it is separate from sensitivity level.
 
-| Level | Meaning | Default |
-| ---: | --- | :---: |
-| 1 | General internal material suitable for ordinary authenticated users | Yes |
-| 2 | Restricted material for explicitly authorized administrators | No |
-| 3 | Highly restricted material for explicitly authorized administrators | No |
+The level comparison is necessary but does not by itself grant visibility.
+Department policy is an independent visibility condition. A document is
+readable only when both the level comparison and the department rule pass.
 
-If upload omits `permission_level`, the server assigns level 1. The server
-rejects values outside `1..3`; it never infers a higher level from a client
-role field. New documents and existing documents without a recorded level
-must be treated as level 1 until an administrator explicitly reclassifies
-them. This migration default preserves access without silently widening
-access to restricted content.
+## Demo role matrix
 
-## Role and action matrix
+| Level | Classification |
+| ---: | --- |
+| 1 | General internal material for users with clearance 1 or higher |
+| 2 | Restricted material for users with clearance 2 or higher |
+| 3 | Highly restricted material for users with clearance 3 |
 
-The product roles for this contract are `admin`, `staff`, and `user`. Roles
-and permissions come from the authenticated server-side identity; clients
-cannot set or override them in a request body, query string, or upload form.
+| Display role | Product role | User clearance | Readable levels | Upload levels |
+| --- | --- | ---: | --- | --- |
+| Executive | `admin` | 3 | 1–3 | 1–3 |
+| Department Manager | `staff` | 2 | 1–2 | 1 only |
+| Standard Staff | `user` | 1 | 1 only | None |
 
-| Action / visibility | Admin | Staff | User |
-| --- | :---: | :---: | :---: |
-| Read/search level 1 | Yes | Yes | Yes |
-| Read/search level 2 or 3 | Yes | No | No |
-| Upload | Yes (levels 1–3) | Yes (level 1 only) | No |
-| List and view document metadata | All documents | Level 1 only | Level 1 only |
-| Change permission level | Yes | No | No |
-| Re-index or delete | Yes | No | No |
-| View scoring debug details | Yes | No | No |
+Document listing, metadata, details, search results, and citation content all
+use the same effective visibility rule; a metadata-only response does not
+bypass either access dimension.
 
-`staff` can access level 1 documents and cannot access level 2 or 3 documents.
-The `user` role has the same visibility ceiling and fewer management actions.
-For the repository's current demo identities, the target adapter mapping is
-`Executive` → `admin`, `Department Manager` → `staff`, and `Standard Staff` →
-`user`. This mapping is a role translation only: all non-admin users have the
-same level-1 visibility ceiling. The adapter must not use the old numeric
-`clearance` value as a substitute for `permission_level`.
+Only `admin` may change a document's permission level, re-index or delete a
+document, or inspect per-candidate scoring diagnostics. `staff` and `user`
+cannot gain higher clearance by submitting a role, clearance, permission, or
+department value in a request.
+
+## Department visibility
+
+The existing demo rule is retained until the team explicitly changes it:
+
+- `admin` may read documents from every department.
+- `staff` and `user` may read documents assigned to their own department or
+  the `Global` department, subject to their clearance level.
+- Department filters may narrow the caller's authorized results; they may
+  never widen them.
+- A document's department must be assigned explicitly and consistently in
+  catalog metadata and every indexed chunk. Upload must not silently infer
+  document ownership from the uploader's department.
+
+The exact allowed-department choices for upload are not yet settled. Until
+that policy is agreed and represented by a server-side allowlist, the server
+must reject an absent or unauthorized `department_id`; the client must not
+invent department names. In particular, selecting `Global` or another team's
+department must require an explicit server authorization rule.
 
 ## Enforcement requirements
 
-- Validate the bearer token and operation permission on every protected
-  endpoint. Return `401` for missing/invalid credentials and `403` for an
-  authenticated principal lacking the operation permission.
-- Apply the document visibility filter in the database/vector query before
-  ranking, snippet construction, citation generation, or debug serialization.
-  Repeat the check before returning document details or changing/deleting a
-  document; do not rely on a filtered list or a hidden UI button.
-- Visibility predicate: `admin OR document.permission_level = 1`. Staff and
-  user do not receive level 2/3 results. A caller-supplied filter may narrow
-  this set but may never widen it.
-- Do not disclose existence, title, creator, counts, citations, or filter
-  reasons for a document the caller cannot see. Return the same not-found
-  response for an absent document and an inaccessible document.
-- Only admin may assign levels 2 or 3, change a document's level, re-index,
-  delete, or inspect per-candidate scoring diagnostics. Staff uploads are
-  forced to level 1 even if a request attempts another value.
-- Keep document metadata in the relational/document catalog and copy
-  `permission_level` to every indexed chunk payload. A mismatch or missing
-  payload level fails closed for retrieval until repaired/re-indexed.
-- Deletion is complete only after catalog metadata, all vector chunks, and
-  related search/index records are removed. If any step fails, return an
-  error and record enough server-side state to retry; do not report success.
+- Validate the bearer token and operation permission on every protected route.
+  Return `401` for missing or invalid credentials and `403` for a caller who
+  lacks permission to perform the operation.
+- Apply both the clearance and department conditions before retrieval ranking,
+  snippets, citations, candidate diagnostics, counts, and pagination. Repeat
+  the checks for direct document detail and citation-chunk requests.
+- Effective level rule: `document.permission_level <= user.clearance_level`.
+  The role matrix determines the user's clearance; caller-supplied filters can
+  only narrow the server-authorized set.
+- Return the same `404` for an absent and an inaccessible document. Do not
+  reveal its existence, title, creator, counts, citation, content, or the
+  reason an access check failed.
+- Store `permission_level` and `department_id` in the document catalog and
+  copy both to every indexed chunk. Missing or inconsistent metadata fails
+  closed until the document is repaired or re-indexed.
+- Only `admin` may assign permission levels 2 or 3, change a level, re-index,
+  delete, or inspect scoring diagnostics. `staff` uploads are limited to
+  level 1; `user` cannot upload.
+- A deletion is complete only when catalog metadata, source content, vectors,
+  and related search-index records are removed. Partial failure must be
+  visible and retryable, never reported as success.
 
-## Token and audit claims
+## Identity and audit
 
-The token contains stable `sub`, product `role`, and server-issued `permissions`
-plus issuer and expiry claims. Do not accept a role, permission, owner, or
-level claim from an untrusted client. Audit document creation, permission
-changes, re-indexing, and deletion with actor, document, old/new level where
-applicable, timestamp, and outcome.
+The authenticated identity supplies a stable user ID, product role, user
+clearance, department membership, issuer, and expiry. Never trust identity or
+authorization fields supplied by the client. Audit document creation,
+permission changes, re-indexing, and deletion with actor, document, relevant
+old/new values, timestamp, and outcome.
 
-The current repository has a development-only mock login and an older
-`clearance`-based implementation. Those are scaffold behavior, not the
-Sprint 4 contract. Production identity and persistent audit storage remain
-deployment requirements.
+On merged `main` (`92bfc08`), the demo role-to-clearance mapping matches the
+matrix above and the backend compares that user-side value with each
+document's `permission_level`. The code and token still call the user field
+`clearance`; the upload route also assigns department from the uploader and
+does not accept a document `department_id`. These are naming and department
+assignment gaps against this contract. The current development login is not
+production authentication. Persistent audit storage and production identity
+provisioning remain deployment work.
