@@ -27,6 +27,6 @@ class DocumentChunk:
     page_end: int
     element_ids: list[str]
     department: str
-    min_clearance: int
+    permission_level: int
     line_start: Optional[int] = None
     line_end: Optional[int] = None

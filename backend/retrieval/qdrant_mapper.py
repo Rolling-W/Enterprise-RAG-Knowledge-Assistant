@@ -20,8 +20,8 @@ def chunk_to_point(
             "page_start": chunk.page_start,
             "page_end": chunk.page_end,
             "element_ids": chunk.element_ids,
-            "department": chunk.department,
-            "min_clearance": chunk.min_clearance,
+            "department_id": chunk.department,
+            "permission_level": chunk.permission_level,
         },
     )
 
@@ -30,6 +30,17 @@ def payload_to_chunk(
     payload: dict,
 ) -> DocumentChunk:
     """Convert Qdrant payload into a DocumentChunk."""
+
+    permission_level = payload.get("permission_level")
+    department_id = payload.get("department_id")
+
+    if (
+        type(permission_level) is not int
+        or permission_level not in (1, 2, 3)
+        or not isinstance(department_id, str)
+        or not department_id.strip()
+    ):
+        raise ValueError("Invalid or missing document access metadata")
 
     page = payload.get("page")
 
@@ -52,14 +63,8 @@ def payload_to_chunk(
             page if page is not None else 1,
         ),
         element_ids=payload.get("element_ids", []),
-        department=payload.get(
-            "department",
-            payload.get("department_id", "Global"),
-        ),
-        min_clearance=payload.get(
-            "min_clearance",
-            payload.get("clearance_level", 0),
-        ),
+        department=department_id,
+        permission_level=permission_level,
         line_start=payload.get("line_start"),
         line_end=payload.get("line_end"),
     )

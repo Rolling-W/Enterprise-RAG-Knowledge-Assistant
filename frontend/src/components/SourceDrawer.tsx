@@ -15,36 +15,59 @@ export function SourceDrawer({
 }) {
   const { session } = useAuth();
   const [document, setDocument] = useState<DocumentDetail | null>(null);
+  const [chunkContent, setChunkContent] = useState<string | null>(null);
   const [error, setError] = useState("");
   const panel = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
     let active = true;
+
     setDocument(null);
+    setChunkContent(null);
     setError("");
+
     if (selection.citation?.unavailable) {
       setError("This source is unavailable or you no longer have access.");
       return;
     }
-    void api
-      .document(selection.documentId, session!.access_token)
-      .then((value) => {
-        if (active) setDocument(value);
+
+    const token = session!.access_token;
+    const chunkId = selection.citation?.id;
+
+    void Promise.all([
+      api.document(selection.documentId, token),
+      chunkId
+        ? api.documentChunk(selection.documentId, chunkId, token)
+        : Promise.resolve(null),
+    ])
+      .then(([documentValue, chunkValue]) => {
+        if (!active) return;
+
+        setDocument(documentValue);
+        setChunkContent(chunkValue?.content ?? null);
       })
       .catch((reason) => {
-        if (active)
-          setError(
-            reason instanceof ApiError && [403, 404].includes(reason.status)
-              ? "This source is unavailable or you no longer have access."
-              : reason instanceof Error
-                ? reason.message
-                : "Unable to open the source.",
-          );
+        if (!active) return;
+
+        setError(
+          reason instanceof ApiError && [403, 404].includes(reason.status)
+            ? "This source is unavailable or you no longer have access."
+            : reason instanceof Error
+              ? reason.message
+              : "Unable to open the source.",
+        );
       });
+
     return () => {
       active = false;
     };
-  }, [selection.documentId, selection.citation?.unavailable, session]);
+  }, [
+    selection.documentId,
+    selection.citation?.id,
+    selection.citation?.unavailable,
+    session,
+  ]);
   useEffect(() => {
     const previous = window.document.activeElement as HTMLElement | null;
     const originalOverflow = window.document.body.style.overflow;
@@ -144,13 +167,10 @@ export function SourceDrawer({
                     {citation.score !== undefined &&
                       ` · Score ${citation.score.toFixed(3)}`}
                   </div>
-                  {citation.content ? (
-                    <p>{citation.content}</p>
+                  {chunkContent || citation.content ? (
+                    <p>{chunkContent ?? citation.content}</p>
                   ) : (
-                    <p>
-                      Source location restored. The permitted document excerpt
-                      is shown below when available.
-                    </p>
+                    <p>No source excerpt is available.</p>
                   )}
                 </section>
               )}
@@ -160,7 +180,11 @@ export function SourceDrawer({
                   <p>{document.preview}</p>
                 </section>
               ) : (
-                !document.preview && <p>No document excerpt is available.</p>
+                !document.preview &&
+                  !chunkContent &&
+                  !citation?.content && (
+                    <p>No document excerpt is available.</p>
+                  )
               )}
             </>
           )}

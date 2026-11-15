@@ -10,7 +10,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from qdrant_client import QdrantClient, models
 from functools import lru_cache
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 
 from backend.ingestion.upload_adapter import parse_uploaded_document
 from backend.retrieval.bm25 import BM25Retriever
@@ -37,6 +37,14 @@ def _embedding_model() -> SentenceTransformer:
     """Load the embedding model once per Python process."""
     return SentenceTransformer(
         "sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+
+@lru_cache(maxsize=1)
+def _reranker_model() -> CrossEncoder:
+    """Load the Cross-Encoder reranker once per Python process."""
+    return CrossEncoder(
+        "cross-encoder/ms-marco-MiniLM-L-6-v2"
     )
 
 
@@ -125,7 +133,7 @@ def ingest(
     content_type: str,
     content: bytes,
     department_id: str,
-    clearance_level: int,
+    permission_level: int,
 ) -> int:
     ensure_collection(client)
 
@@ -134,7 +142,7 @@ def ingest(
         content=content,
         document_id=document_id,
         department=department_id,
-        min_clearance=clearance_level,
+        permission_level=permission_level,
     )
 
     is_pdf = PurePath(filename).suffix.lower() == ".pdf"
@@ -153,7 +161,7 @@ def ingest(
             "document_id": document_id,
             "chunk_id": chunk.chunk_id,
             "department_id": chunk.department,
-            "clearance_level": chunk.min_clearance,
+            "permission_level": chunk.permission_level,
             "content_type": content_type,
             "title": filename,
             "content": chunk.content,
@@ -180,6 +188,121 @@ def ingest(
     return len(points)
 
 
+def delete_document_points(
+    client: QdrantClient,
+    *,
+    document_id: str,
+) -> None:
+    """Delete all Qdrant points belonging to one document."""
+
+    if not document_id:
+        raise ValueError("document_id cannot be empty")
+
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="document_id",
+                        match=models.MatchValue(value=document_id),
+                    )
+                ]
+            )
+        ),
+        wait=True,
+    )
+
+
+def update_document_permission(
+    client: QdrantClient,
+    *,
+    document_id: str,
+    permission_level: int,
+) -> None:
+    """Update the permission level of all Qdrant chunks for a document."""
+
+    if not document_id:
+        raise ValueError("document_id cannot be empty")
+
+    if permission_level not in (1, 2, 3):
+        raise ValueError("permission_level must be between 1 and 3")
+
+    client.set_payload(
+        collection_name=COLLECTION_NAME,
+        payload={"permission_level": permission_level},
+        points=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="document_id",
+                        match=models.MatchValue(value=document_id),
+                    )
+                ]
+            )
+        ),
+        wait=True,
+    )
+
+
+def verify_document_permission(
+    client: QdrantClient,
+    *,
+    document_id: str,
+    permission_level: int,
+) -> int:
+    """Verify all indexed chunks have the expected permission level."""
+
+    if not document_id:
+        raise ValueError("document_id cannot be empty")
+
+    if permission_level not in (1, 2, 3):
+        raise ValueError("permission_level must be between 1 and 3")
+
+    document_filter = models.Filter(
+        must=[
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchValue(value=document_id),
+            )
+        ]
+    )
+
+    verified_count = 0
+    offset = None
+
+    while True:
+        points, next_offset = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=document_filter,
+            limit=100,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        for point in points:
+            payload = point.payload or {}
+
+            if payload.get("permission_level") != permission_level:
+                raise RuntimeError(
+                    f"Permission mismatch for document {document_id}"
+                )
+
+            verified_count += 1
+
+        if next_offset is None:
+            break
+
+        offset = next_offset
+
+    if verified_count == 0:
+        raise RuntimeError(
+            f"No indexed chunks found for document {document_id}"
+        )
+
+    return verified_count
+
 
 def search(
     client: QdrantClient,
@@ -191,13 +314,26 @@ def search(
     department_id: str,
     is_executive: bool,
     department_filter: str | None = None,
+    allowed_document_ids: list[str] | None = None,
 ) -> list[models.ScoredPoint]:
+
+    # PostgreSQL authorization is mandatory.
+    if allowed_document_ids is None:
+        raise ValueError(
+            "PostgreSQL document authorization is required"
+        )
+
+    if not allowed_document_ids:
+        return []
+
     ensure_collection(client)
+
     query_filter = access_filter(
         clearance_level=clearance_level,
         department_id=department_id,
         is_executive=is_executive,
     )
+
     if department_filter:
         query_filter.must.append(
             models.FieldCondition(
@@ -205,13 +341,25 @@ def search(
                 match=models.MatchValue(value=department_filter),
             )
         )
+
+    query_filter.must.append(
+        models.FieldCondition(
+            key="document_id",
+            match=models.MatchAny(any=allowed_document_ids),
+        )
+    )
+
     if mode == "keyword":
         return _keyword_search(client, query, top_k, query_filter)
+
+    # Retrieve a larger candidate pool for hybrid reranking.
+    candidate_limit = max(20, top_k)
+
     semantic_response = client.query_points(
         collection_name=COLLECTION_NAME,
         query=_vector(query),
         query_filter=query_filter,
-        limit=top_k,
+        limit=candidate_limit if mode == "hybrid" else top_k,
         with_payload=True,
     )
     semantic = semantic_response.points
@@ -220,7 +368,7 @@ def search(
 
     # Hybrid Search: Reciprocal Rank Fusion (RRF)
     keyword = _keyword_search(
-        client, query, top_k, query_filter
+        client, query, candidate_limit, query_filter
     )
 
     rrf_k = 60
@@ -244,16 +392,318 @@ def search(
         reverse=True,
     )
 
+
+    # Select candidates using the existing RRF ranking.
     results = []
 
-    for point_id in ranked_ids[:top_k]:
+    for point_id in ranked_ids[:candidate_limit]:
         point = points_by_id[point_id]
         point.score = fused_scores[point_id]
         results.append(point)
 
-    return results
+    if not results:
+        return []
+
+    # Prepare query-document pairs for Cross-Encoder.
+    pairs = []
+
+    for point in results:
+        payload = point.payload or {}
+        content = payload.get("content")
+
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(
+                "Retrieved chunk is missing text content"
+            )
+
+        pairs.append((query, content))
+
+    # Compute Cross-Encoder relevance scores.
+    rerank_scores = _reranker_model().predict(
+        pairs,
+        show_progress_bar=False,
+    )
+
+    # Replace the RRF score with the final reranking score.
+    for point, score in zip(results, rerank_scores):
+        point.score = float(score)
+
+    # Return the most relevant chunks after reranking.
+    results.sort(
+        key=lambda point: point.score,
+        reverse=True,
+    )
+
+    return results[:top_k]
 
 
+
+def search_debug(
+    client: QdrantClient,
+    *,
+    query: str,
+    top_k: int,
+    candidate_limit: int,
+    mode: str,
+    clearance_level: int,
+    department_id: str,
+    is_executive: bool,
+    department_filter: str | None = None,
+    allowed_document_ids: list[str] | None = None,
+) -> tuple[list[dict], list[str], dict[str, float]]:
+    """Return authorized search candidates with stage scores and timings."""
+    from time import perf_counter
+
+    if allowed_document_ids is None:
+        raise ValueError("PostgreSQL document authorization is required")
+
+    if not allowed_document_ids:
+        return [], [], {
+            "authorization_filter": 0.0,
+            "bm25": 0.0,
+            "dense": 0.0,
+            "fusion": 0.0,
+            "rerank": 0.0,
+        }
+
+    started = perf_counter()
+
+    ensure_collection(client)
+
+    query_filter = access_filter(
+        clearance_level=clearance_level,
+        department_id=department_id,
+        is_executive=is_executive,
+    )
+
+    if department_filter:
+        query_filter.must.append(
+            models.FieldCondition(
+                key="department_id",
+                match=models.MatchValue(value=department_filter),
+            )
+        )
+
+    query_filter.must.append(
+        models.FieldCondition(
+            key="document_id",
+            match=models.MatchAny(any=allowed_document_ids),
+        )
+    )
+
+    timings = {
+        "authorization_filter": (perf_counter() - started) * 1000,
+        "bm25": 0.0,
+        "dense": 0.0,
+        "fusion": 0.0,
+        "rerank": 0.0,
+    }
+
+    keyword = []
+    semantic = []
+    stages = []
+
+    if mode in ("keyword", "hybrid"):
+        started = perf_counter()
+
+        keyword = _keyword_search(
+            client,
+            query,
+            candidate_limit,
+            query_filter,
+            return_raw_scores=True,
+        )
+
+        timings["bm25"] = (perf_counter() - started) * 1000
+        stages.append("bm25")
+
+    if mode in ("semantic", "hybrid"):
+        started = perf_counter()
+
+        semantic = client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=_vector(query),
+            query_filter=query_filter,
+            limit=candidate_limit,
+            with_payload=True,
+        ).points
+
+        timings["dense"] = (perf_counter() - started) * 1000
+        stages.append("dense")
+
+
+    candidates = {}
+    candidate_text_by_key = {}
+
+
+    def add_results(points, stage):
+        for rank, point in enumerate(points, start=1):
+            point_id = str(point.id)
+            payload = point.payload or {}
+
+            if point_id not in candidates:
+                candidate_text_by_key[
+                    (str(payload["document_id"]), str(payload["chunk_id"]))
+                ] = payload.get("content", "")
+
+                candidates[point_id] = {
+                    "document_id": str(payload["document_id"]),
+                    "chunk_id": str(payload["chunk_id"]),
+                    "permission_level": int(payload["permission_level"]),
+                    "scores": {
+                        "bm25_raw": None,
+                        "bm25_rank": None,
+                        "dense_raw": None,
+                        "dense_rank": None,
+                        "fusion": None,
+                        "rerank": None,
+                        "final": None,
+                    },
+                }
+
+            scores = candidates[point_id]["scores"]
+            scores[f"{stage}_raw"] = float(point.score)
+            scores[f"{stage}_rank"] = rank
+
+    add_results(keyword, "bm25")
+    add_results(semantic, "dense")
+
+    started = perf_counter()
+
+    for candidate in candidates.values():
+        scores = candidate["scores"]
+
+        if mode == "hybrid":
+            fusion = 0.0
+
+            if scores["bm25_rank"] is not None:
+                fusion += 1.0 / (60 + scores["bm25_rank"])
+
+            if scores["dense_rank"] is not None:
+                fusion += 1.0 / (60 + scores["dense_rank"])
+
+            scores["fusion"] = fusion
+            scores["final"] = fusion
+
+        elif mode == "keyword":
+            scores["final"] = 1.0 / scores["bm25_rank"]
+
+        else:
+            scores["final"] = scores["dense_raw"]
+
+    ranked = sorted(
+        candidates.values(),
+        key=lambda candidate: (
+            -candidate["scores"]["final"],
+            candidate["chunk_id"],
+        ),
+    )
+
+    ranked = ranked[:candidate_limit]
+
+    # Record RRF fusion time before reranking.
+    timings["fusion"] = (perf_counter() - started) * 1000
+
+    if mode == "hybrid":
+        stages.append("rrf")
+
+        if ranked:
+            started = perf_counter()
+
+            # Prepare query-chunk pairs.
+            pairs = []
+
+            for candidate in ranked:
+                key = (
+                    candidate["document_id"],
+                    candidate["chunk_id"],
+                )
+
+                content = candidate_text_by_key[key]
+
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError(
+                        "Retrieved chunk is missing text content"
+                    )
+
+                pairs.append((query, content))
+
+            # Compute Cross-Encoder scores.
+            rerank_scores = _reranker_model().predict(
+                pairs,
+                show_progress_bar=False,
+            )
+
+            # Preserve RRF scores while updating final scores.
+            for candidate, score in zip(ranked, rerank_scores):
+                candidate["scores"]["rerank"] = float(score)
+                candidate["scores"]["final"] = float(score)
+
+            # Sort by Cross-Encoder relevance.
+            ranked.sort(
+                key=lambda candidate: (
+                    -candidate["scores"]["final"],
+                    candidate["chunk_id"],
+                ),
+            )
+
+            timings["rerank"] = (
+                perf_counter() - started
+            ) * 1000
+
+            stages.append("rerank")
+
+    # Assign final ranks after reranking.
+    for rank, candidate in enumerate(ranked, start=1):
+        candidate["final_rank"] = rank
+
+    return ranked, stages, timings
+
+
+def get_chunk_content(
+    client: QdrantClient,
+    *,
+    document_id: str,
+    chunk_id: str,
+) -> str | None:
+    """Retrieve the content of one specific document chunk."""
+
+    if not document_id or not chunk_id:
+        raise ValueError("Document ID and Chunk ID are required")
+
+    chunk_filter = models.Filter(
+        must=[
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchValue(value=document_id),
+            ),
+            models.FieldCondition(
+                key="chunk_id",
+                match=models.MatchValue(value=chunk_id),
+            ),
+        ]
+    )
+
+    points, _ = client.scroll(
+        collection_name=COLLECTION_NAME,
+        scroll_filter=chunk_filter,
+        limit=2,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    if not points:
+        return None
+
+    if len(points) > 1:
+        raise RuntimeError("Duplicate document chunk found")
+
+    content = (points[0].payload or {}).get("content")
+
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    return content
 
 
 def _keyword_search(
@@ -261,7 +711,10 @@ def _keyword_search(
     query: str,
     top_k: int,
     query_filter: models.Filter,
+    *,
+    return_raw_scores: bool = False,
 ) -> list[models.ScoredPoint]:
+
     """Run BM25 on documents authorized by Qdrant RBAC."""
 
     records = []
@@ -325,7 +778,11 @@ def _keyword_search(
             models.ScoredPoint(
                 id=record.id,
                 version=0,
-                score=1.0 / (len(results) + 1),
+                score=(
+                    float(raw_score)
+                    if return_raw_scores
+                    else 1.0 / (len(results) + 1)
+                ),
                 payload=record.payload,
             )
         )

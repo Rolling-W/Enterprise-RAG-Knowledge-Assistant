@@ -35,51 +35,109 @@ describe("Sprint 4 mock contract", () => {
       status: 401,
     });
   });
+
   it.each(["keyword", "semantic", "hybrid"] as const)(
-    "enforces Level 1 before %s retrieval and metadata disclosure",
+    "enforces clearance and department RBAC before %s retrieval",
     async (mode) => {
-      const staff = await login(),
-        user = await login("staff"),
-        admin = await login("executive");
-      for (const token of [staff.access_token, user.access_token]) {
-        expect(
-          (await client.documents(token)).items.map(
-            (item) => item.permission_level,
-          ),
-        ).toEqual([1, 1, 1]);
-        expect(
-          (
-            await client.search("leave manager strategy", token, {
-              search_mode: mode,
-            })
-          ).results.map((item) => item.permission_level),
-        ).toEqual([1]);
-        expect(
-          (
-            await client.search("strategy", token, {
-              filters: { permission_level: 3 },
-            })
-          ).results,
-        ).toEqual([]);
-        expect(
-          (await client.documents(token, { permission_level: 2 })).total,
-        ).toBe(0);
-        await expect(
-          client.document("doc-manager", token),
-        ).rejects.toMatchObject({ status: 404 });
-        await expect(client.document("absent", token)).rejects.toMatchObject({
-          status: 404,
-        });
-      }
+      const manager = await login("manager");
+      const staff = await login("staff");
+      const admin = await login("executive");
+
+      // Department Manager: General / Global, Level 1–2
+      const managerDocuments = await client.documents(manager.access_token);
+
       expect(
-        (
-          await client.search("manager strategy", admin.access_token, {
-            search_mode: mode,
-          })
-        ).results,
+        managerDocuments.items.map((item) => item.permission_level),
+      ).toEqual([1, 1, 1, 2]);
+
+      expect(
+        (await client.documents(manager.access_token, {
+          permission_level: 2,
+        })).total,
+      ).toBe(1);
+
+      expect(
+        (await client.document("doc-manager", manager.access_token))
+          .permission_level,
+      ).toBe(2);
+
+      await expect(
+        client.document("doc-strategy", manager.access_token),
+      ).rejects.toMatchObject({ status: 404 });
+
+      // Standard Staff: General / Global, Level 1 only
+      const staffDocuments = await client.documents(staff.access_token);
+
+      expect(
+        staffDocuments.items.map((item) => item.permission_level),
+      ).toEqual([1, 1, 1]);
+
+      expect(
+        (await client.documents(staff.access_token, {
+          permission_level: 2,
+        })).total,
+      ).toBe(0);
+
+      await expect(
+        client.document("doc-manager", staff.access_token),
+      ).rejects.toMatchObject({ status: 404 });
+
+      // Search must enforce the same RBAC rules.
+      const managerResults = await client.search(
+        "leave manager strategy",
+        manager.access_token,
+        { search_mode: mode },
+      );
+
+      expect(
+        managerResults.results.some(
+          (item) => item.document_id === "doc-manager",
+        ),
+      ).toBe(true);
+
+      expect(
+        managerResults.results.every(
+          (item) => item.permission_level! <= 2,
+        ),
+      ).toBe(true);
+
+      const staffResults = await client.search(
+        "leave manager strategy",
+        staff.access_token,
+        { search_mode: mode },
+      );
+
+      expect(
+        staffResults.results.every(
+          (item) => item.permission_level === 1,
+        ),
+      ).toBe(true);
+
+      // Client filters must not bypass authorization.
+      for (const token of [
+        manager.access_token,
+        staff.access_token,
+      ]) {
+        expect(
+          (await client.search("strategy", token, {
+            filters: { permission_level: 3 },
+          })).results,
+        ).toEqual([]);
+      }
+
+      // Executive can access all departments and levels.
+      expect(
+        (await client.documents(admin.access_token)).total,
+      ).toBe(5);
+
+      expect(
+        (await client.search("manager strategy", admin.access_token, {
+          search_mode: mode,
+        })).results,
       ).toHaveLength(2);
     },
   );
+
   it("defaults uploads to Level 1, restricts staff selection and denies user uploads", async () => {
     const staff = await login(),
       user = await login("staff"),
@@ -144,7 +202,7 @@ describe("Sprint 4 mock contract", () => {
   it("updates permission, re-indexes and deletes; mutation failures leave state intact", async () => {
     vi.useFakeTimers();
     const admin = await login("executive"),
-      staff = await login();
+      staff = await login("staff");
     expect(
       (await client.document("doc-handbook", staff.access_token))
         .available_actions,
@@ -187,7 +245,7 @@ describe("Sprint 4 mock contract", () => {
     );
   });
   it("persists ordered owner-only messages and rechecks citations after permission changes", async () => {
-    const staff = await login(),
+    const staff = await login("staff"),
       admin = await login("executive"),
       other = await login("other");
     const conversation = await client.createConversation(

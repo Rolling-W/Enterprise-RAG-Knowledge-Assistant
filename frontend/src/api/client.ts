@@ -15,6 +15,7 @@ import type {
   Conversation,
   ConversationSummary,
   Page,
+  ChunkPreviewResponse,
 } from "./contracts";
 
 export class ApiError extends Error {
@@ -133,6 +134,16 @@ export function createApiClient(options: ClientOptions) {
     document: (id: string, token: string) =>
       request<DocumentDetail>(
         `/api/v1/documents/${encodeURIComponent(id)}`,
+        {},
+        token,
+      ),
+    documentChunk: (
+      documentId: string,
+      chunkId: string,
+      token: string,
+    ) =>
+      request<ChunkPreviewResponse>(
+        `/api/v1/documents/${encodeURIComponent(documentId)}/chunks/${encodeURIComponent(chunkId)}`,
         {},
         token,
       ),

@@ -20,6 +20,8 @@ describe("HTTP client and display adapters", () => {
           username: "admin",
           role: "admin",
           permissions: [],
+          department: "Executive",
+          clearance: 3,
         },
       }).user.permissions,
     ).toEqual([]);
@@ -109,6 +111,7 @@ describe("HTTP client and display adapters", () => {
             chunk_id: "c",
             title: "Private title",
             permission_level: 2,
+            score: null,
             page: 12,
             line_start: null,
             line_end: null,

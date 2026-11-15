@@ -57,14 +57,29 @@ function initialDocuments(): DocumentDetail[] {
     page_count: item.page_count,
   }));
 }
+
 export function createMockTransport(options: MockOptions = {}) {
   let documents = initialDocuments();
+
+  const documentDepartments = new Map(
+    seedDocuments.map((item) => [item.document_id, item.department]),
+  );
   const sessions = new Map<string, { user: UserSummary; expiresAt: number }>();
   const conversations = new Map<string, Conversation>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const scenarios = new Map<string, Scenario>();
-  const canRead = (document: DocumentSummary, user: UserSummary) =>
-    productRole(user.role) === "admin" || document.permission_level === 1;
+  const canRead = (document: DocumentSummary, user: UserSummary) => {
+    if (productRole(user.role) === "admin") {
+      return true;
+    }
+
+    const department = documentDepartments.get(document.document_id);
+
+    return (
+      document.permission_level <= (user.clearance ?? 0) &&
+      (department === "Global" || department === user.department)
+    );
+  };
   const view = (
     document: DocumentDetail,
     user: UserSummary,
@@ -149,33 +164,32 @@ export function createMockTransport(options: MockOptions = {}) {
           401,
         );
       const username = payload.username.trim().toLowerCase();
-      const role = [
-        "executive@enterprise.local",
-        "admin@enterprise.local",
-      ].includes(username)
+
+      const role =
+      username === "executive@enterprise.local"
         ? "admin"
-        : [
-              "manager@enterprise.local",
-              "staff-level1@enterprise.local",
-            ].includes(username)
+        : username === "manager@enterprise.local"
           ? "staff"
           : "user";
+
+      const department = role === "admin" ? "Executive" : "General";
+
+      const clearance = role === "admin" ? 3 : role === "staff" ? 2 : 1;
+
       const user: UserSummary = {
-        user_id: "demo-" + username,
-        username,
-        role,
-        permissions:
-          role === "admin"
-            ? [
-                "document:read",
-                "document:upload",
-                "document:manage",
-                "search:debug",
-              ]
-            : role === "staff"
-              ? ["document:read", "document:upload"]
-              : ["document:read"],
+      user_id: "demo-" + username,
+      username,
+      role,
+      department,
+      clearance,
+      permissions:
+        role === "admin"
+          ? ["document:read", "document:upload", "document:manage"]
+          : role === "staff"
+            ? ["document:read", "document:upload"]
+            : ["document:read"],
       };
+
       const access_token = "mock-" + crypto.randomUUID();
       sessions.set(access_token, { user, expiresAt: Date.now() + 3600000 });
       return json({
@@ -256,6 +270,34 @@ export function createMockTransport(options: MockOptions = {}) {
           params,
         ),
       );
+    }
+    const chunkMatch = route.match(
+      /^\/api\/v1\/documents\/([^/]+)\/chunks\/([^/]+)$/,
+    );
+
+    if (chunkMatch && method === "GET") {
+      const documentId = decodeURIComponent(chunkMatch[1]);
+      const chunkId = decodeURIComponent(chunkMatch[2]);
+
+      const document = documents.find(
+        (item) => item.document_id === documentId,
+      );
+
+      if (
+        !document ||
+        !canRead(document, user) ||
+        document.status !== "indexed" ||
+        chunkId !== `${documentId}-chunk-1` ||
+        !document.preview
+      ) {
+        return missing();
+      }
+
+      return json({
+        document_id: documentId,
+        chunk_id: chunkId,
+        content: document.preview,
+      });
     }
     const docMatch = route.match(
       /^\/api\/v1\/documents\/([^/]+)(?:\/(permissions|reindex))?$/,
@@ -341,9 +383,13 @@ export function createMockTransport(options: MockOptions = {}) {
             ? "A text preview is not available for this demo PDF."
             : (await readText()).slice(0, 16000),
       };
+
+      documentDepartments.set(document.document_id, user.department);
+
       documents.unshift(document);
       startProcessing(document, file.name.includes("processing-error"));
       return json(view(document, user), 202);
+
     }
     if (
       (route === "/api/v1/search" || route === "/api/v1/search/debug") &&
@@ -586,6 +632,7 @@ export function createMockTransport(options: MockOptions = {}) {
               title: item.title,
               permission_level: item.permission_level!,
               ...item.citation,
+              score: item.score,
             })),
           },
         );
