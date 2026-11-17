@@ -7,18 +7,19 @@ Owner: Ruolin Wang — Project Manager and Lead Architect
 ## Acceptance cases
 
 Run these against the integrated backend with isolated test data and three
-authenticated principals (`admin`, `staff`, `user`). Each row is a release
-gate; record the run ID, build/commit, and evidence when executed.
+authenticated principals: Executive (`admin`), Department Manager (`staff`),
+and Standard Staff (`user`). Each row is a release gate; record the run ID,
+build/commit, and evidence when executed.
 
 | ID | Area | Setup / action | Expected result |
 | --- | --- | --- | --- |
 | RBAC-01 | Authentication | Call protected route without token, with malformed token, and expired token | Each returns 401; no data returned |
-| RBAC-02 | Upload default | Admin uploads without `permission_level` and supplies an authorized `department_id` | Stored level is 1; supplied department and level appear in response and catalog |
+| RBAC-02 | Upload default | Executive (`admin`) uploads without `permission_level` and supplies an authorized `department_id` | Stored level is 1; supplied department and level appear in response and catalog |
 | RBAC-03 | Upload validation | Upload with level 0, 4, or non-integer value | 422; no catalog/vector record created |
-| RBAC-04 | Upload boundary | Staff uploads level 1, then attempts level 2/3 | Level 1 succeeds; level 2/3 returns 403; no restricted record created |
+| RBAC-04 | Upload boundary | Department Manager (`staff`) uploads level 1, then attempts level 2/3; Standard Staff (`user`) attempts level 1 | Manager level 1 succeeds; manager level 2/3 and all Standard Staff uploads return 403; no unauthorized record is created |
 | RBAC-05 | Department assignment | Upload with an allowed, missing, unknown, and unauthorized department | Allowed assignment is persisted identically in catalog and vector payloads; invalid or unauthorized assignments fail without partial records |
-| RBAC-06 | Role boundary | User attempts upload and all management routes | 403; no state changes |
-| RBAC-07 | Search visibility | Seed matching docs at levels 1, 2, 3 across own, other, and Global departments; search as each role | Admin sees levels 1–3 across departments; staff sees levels 1–2 in own/Global; user sees level 1 in own/Global |
+| RBAC-06 | Role boundary | Standard Staff (`user`) attempts upload and all management routes | 403; no state changes |
+| RBAC-07 | Search visibility | Seed matching docs at levels 1, 2, 3 across own, other, and Global departments; search as each role | Executive sees levels 1–3 across departments; Department Manager sees levels 1–2 in own/Global; Standard Staff sees level 1 in own/Global |
 | RBAC-08 | Search paths | Repeat RBAC-07 with keyword, dense/semantic, and hybrid search | Same authorized document set in every mode; both access dimensions apply before ranking/snippet creation |
 | RBAC-09 | Caller filters | Callers request levels above clearance or departments outside their visibility | Filter narrows to empty or returns 403; never expands visibility |
 | RBAC-10 | Metadata disclosure | Request list, search, debug, or direct detail for a restricted document | No title, creator, citation, count, content, or existence leak; detail is indistinguishable from absent (404) |

@@ -35,7 +35,8 @@ The acceptance record identifies remaining gaps and verification status.
 ```
 
 `clearance_level` is user-only and derives from the authenticated role:
-admin=3, staff=2, user=1. It is compared by the backend with each document's
+Executive (`admin`)=3, Department Manager (`staff`)=2, Standard Staff
+(`user`)=1. It is compared by the backend with each document's
 `permission_level`; it is not copied into document or citation DTOs.
 
 ### Document summary
@@ -98,9 +99,10 @@ summary with `user_id`, `username`, `role` (`admin|staff|user`), and
 
 Multipart fields: `file` (required), `department_id` (required), and
 `permission_level` (optional integer `1..3`, default 1). Server derives actor,
-product role, and user clearance from the token. Admin may choose levels 1–3;
-staff may upload level 1 only; user receives 403. Attempts by staff to assign
-level 2/3 receive 403. The server validates `department_id` against a
+product role, and user clearance from the token. Executive (`admin`) may
+choose levels 1–3; Department Manager (`staff`) may upload level 1 only;
+Standard Staff (`user`) cannot upload and receives 403. Attempts by staff to
+assign level 2/3 receive 403. The server validates `department_id` against a
 server-owned allowlist and the caller's assignment authority; the client must
 not invent department names. The exact allowlist and which non-admin roles may
 assign `Global` or another department remain a policy decision and must be

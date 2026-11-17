@@ -21,7 +21,11 @@ The level comparison is necessary but does not by itself grant visibility.
 Department policy is an independent visibility condition. A document is
 readable only when both the level comparison and the department rule pass.
 
-## Demo role matrix
+## Role mapping and permission matrix
+
+Use the business role names below in product documentation. The API continues
+to use the stable `admin`, `staff`, and `user` role identifiers shown in the
+second column.
 
 | Level | Classification |
 | ---: | --- |
@@ -29,11 +33,14 @@ readable only when both the level comparison and the department rule pass.
 | 2 | Restricted material for users with clearance 2 or higher |
 | 3 | Highly restricted material for users with clearance 3 |
 
-| Display role | Product role | User clearance | Readable levels | Upload levels |
+| Business role | API role | User clearance | Readable levels | Upload levels |
 | --- | --- | ---: | --- | --- |
 | Executive | `admin` | 3 | 1–3 | 1–3 |
 | Department Manager | `staff` | 2 | 1–2 | 1 only |
-| Standard Staff | `user` | 1 | 1 only | None |
+| Standard Staff | `user` | 1 | 1 only | Not allowed |
+
+These are document sensitivity permissions. Department visibility remains a
+separate condition and does not increase a role's readable permission levels.
 
 Document listing, metadata, details, search results, and citation content all
 use the same effective visibility rule; a metadata-only response does not

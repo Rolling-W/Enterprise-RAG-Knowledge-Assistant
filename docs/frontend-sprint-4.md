@@ -7,8 +7,9 @@ does not replace the cross-layer release gates in sprint-4-acceptance.md.
 
 ## Implemented
 
-- Upload permission selector: Level 1 default, admin Levels 1-3, staff Level 1,
-  user read-only. Multipart requests include `permission_level`.
+- Upload permission selector: Level 1 default, Executive (`admin`) Levels 1-3,
+  Department Manager (`staff`) Level 1, and Standard Staff (`user`) cannot
+  upload. Multipart requests include `permission_level`.
 - Real document API client and library: server pagination, sorting, title/filename/
   keyword query, level/creator/status filters, details, permission changes,
   re-index, confirmed deletion and processing polling. Mutation buttons use
@@ -30,7 +31,9 @@ does not replace the cross-layer release gates in sprint-4-acceptance.md.
   Production builds omit the inspector entry.
 - Authentication consumes server-issued permissions when supplied, including
   an empty set; legacy identity permissions remain a presentation fallback.
-  Role labels use User / Staff / Admin; legacy identity mapping is preserved.
+  The business role mapping is Executive=`admin`, Department Manager=`staff`,
+  and Standard Staff=`user`. The current UI labels those roles Admin, Staff,
+  and User respectively; legacy identity mapping is preserved.
 - Updated mock transport and component/API/workflow tests cover the new contract.
   Mock authorization is a UI test fixture, not production security.
 
@@ -49,9 +52,9 @@ Development shortcuts (password demo123):
 
 | Shortcut | Existing development email | Product role | Visibility / upload |
 | --- | --- | --- | --- |
-| User | staff@enterprise.local | user | Level 1 / no upload |
-| Staff | manager@enterprise.local | staff | Level 1 / Level 1 upload |
-| Admin | executive@enterprise.local | admin | Levels 1-3 / Levels 1-3 upload |
+| Standard Staff | staff@enterprise.local | user | Level 1 / upload not allowed |
+| Department Manager | manager@enterprise.local | staff | Levels 1-2 / Level 1 upload |
+| Executive | executive@enterprise.local | admin | Levels 1-3 / Levels 1-3 upload |
 
 The frontend currently has no department selector for uploads. Its demo and
 mock identities also retain a `clearance` field, while the canonical contract
