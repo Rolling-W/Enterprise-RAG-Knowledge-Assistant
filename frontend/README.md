@@ -29,12 +29,19 @@ Routes use HashRouter: /#/login, /#/assistant and /#/documents. Login is in memo
 Saved history is loaded from the backend after signing in. Mock catalog/history
 are in memory and reset when the page fully reloads.
 
-The current backend has login/upload/search but still needs the Sprint 4
-document catalog, permission, debug and conversation implementation. Missing
-APIs show explicit unavailable states. Unsupported conversation creation
-switches to clearly marked search-only mode, using real retrieval in live mode.
+On current `main` (`92bfc08`), PR #7 has integrated the Sprint 4 document
+catalog, permission, debug, and conversation APIs. Their implementation has
+not yet passed the updated cross-layer acceptance plan. Missing APIs show
+explicit unavailable states. Unsupported conversation creation switches to
+clearly marked search-only mode, using real retrieval in live mode.
 Saved messages currently use server retrieval settings because the message
 contract accepts content only. Search-only mode supports keyword/semantic/hybrid.
+
+The aligned access contract keeps user `clearance_level`, document
+`permission_level`, and document `department_id` separate. The backend still
+uses `clearance` for the user-side field and assigns uploads to the uploader's
+department; this frontend has no department selector. The allowed department
+choices remain to be agreed; see [rbac-security.md](../docs/rbac-security.md).
 
 See [Sprint 4 frontend delivery](../docs/frontend-sprint-4.md) for API dependencies,
 verification, compatibility details and the handoff checklist. The source of

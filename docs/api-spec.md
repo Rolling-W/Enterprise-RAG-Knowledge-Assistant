@@ -1,10 +1,10 @@
 # REST API Contract
 
-FastAPI's `/openapi.json` is the executable contract for implemented routes.
-This document also specifies the Sprint 4 target routes so backend and
-frontend work can proceed against stable DTOs. Target routes not yet present
-in OpenAPI are marked **Sprint 4 target** and must not be represented as
-implemented until the service and integration checks exist.
+FastAPI's `/openapi.json` describes the routes in the running backend. This
+document defines the desired cross-layer DTO and behavior contract. Sprint 4
+routes are now present on merged `main` via PR #7; presence alone does not
+establish conformance to the rules in [rbac-security.md](./rbac-security.md).
+The acceptance record identifies remaining gaps and verification status.
 
 ## Conventions
 
@@ -21,6 +21,24 @@ implemented until the service and integration checks exist.
 
 ## Shared DTOs
 
+### Authenticated user summary
+
+```json
+{
+  "user_id": "user_123",
+  "username": "manager@enterprise.local",
+  "role": "staff",
+  "clearance_level": 2,
+  "department_id": "General",
+  "permissions": ["document:read", "document:upload"]
+}
+```
+
+`clearance_level` is user-only and derives from the authenticated role:
+Executive (`admin`)=3, Department Manager (`staff`)=2, Standard Staff
+(`user`)=1. It is compared by the backend with each document's
+`permission_level`; it is not copied into document or citation DTOs.
+
 ### Document summary
 
 ```json
@@ -30,6 +48,7 @@ implemented until the service and integration checks exist.
   "title": "Employee Handbook",
   "content_type": "application/pdf",
   "size_bytes": 18240,
+  "department_id": "General",
   "permission_level": 1,
   "creator": {"user_id": "user_123", "display_name": "A. User"},
   "created_at": "2026-10-30T15:20:00Z",
@@ -39,7 +58,8 @@ implemented until the service and integration checks exist.
 }
 ```
 
-`permission_level` is an integer `1..3`; default is 1. `status` is one of
+`department_id` is the document's audience scope. `permission_level` is an
+integer `1..3`; default is 1. `status` is one of
 `processing`, `indexed`, `failed`, or `deleting`. `available_actions` is the
 server-calculated set from the current principal and resource state. It is a
 UI hint; every operation still performs authorization on the server.
@@ -51,6 +71,7 @@ UI hint; every operation still performs authorization on the server.
   "document_id": "doc_abc123",
   "chunk_id": "chunk_001",
   "title": "Employee_Handbook.pdf",
+  "department_id": "General",
   "permission_level": 1,
   "content": "Employees receive 23 days of annual leave.",
   "content_type": "application/pdf",
@@ -76,29 +97,37 @@ summary with `user_id`, `username`, `role` (`admin|staff|user`), and
 
 ### `POST /api/v1/upload` — existing route; Sprint 4 contract update
 
-Multipart fields: `file` (required), `permission_level` (optional integer
-`1..3`, default 1). Server derives actor and role from the token. Admin may
-choose 1–3; staff may upload level 1 only; user receives 403. Attempts to
-assign staff level 2/3 receive 403. Response `202` returns the created
-document summary, including its assigned level, creator, timestamps, status,
-and available actions.
+Multipart fields: `file` (required), `department_id` (required), and
+`permission_level` (optional integer `1..3`, default 1). Server derives actor,
+product role, and user clearance from the token. Executive (`admin`) may
+choose levels 1–3; Department Manager (`staff`) may upload level 1 only;
+Standard Staff (`user`) cannot upload and receives 403. Attempts by staff to
+assign level 2/3 receive 403. The server validates `department_id` against a
+server-owned allowlist and the caller's assignment authority; the client must
+not invent department names. The exact allowlist and which non-admin roles may
+assign `Global` or another department remain a policy decision and must be
+settled before this route is implemented. Response `202` returns the created
+document summary, including its assigned department and permission level,
+creator, timestamps, status, and available actions.
 
-### `GET /api/v1/documents` — Sprint 4 target
+### `GET /api/v1/documents` — implemented on main; conformance pending
 
 Query parameters: `page`, `page_size`, `sort_by` (`created_at|updated_at|
 filename|permission_level|status`), `sort_order` (`asc|desc`), optional
-`permission_level`, `creator_id`, `status`, and `q` (title, filename, tags,
-or indexed keywords). Server applies visibility constraints before filters
-and pagination. Response is the shared paginated shape. A requested level
-filter outside the caller's visibility returns an empty set (it never widens
-visibility).
+`department_id`, `permission_level`, `creator_id`, `status`, and `q` (title,
+filename, tags, or indexed keywords). Server applies the user's clearance and
+department visibility before caller filters and pagination. Filters can only
+narrow that set. A requested level outside the caller's clearance or a
+department outside the caller's scope returns an empty set; it never widens
+visibility.
 
-### `GET /api/v1/documents/{document_id}` — Sprint 4 target
+### `GET /api/v1/documents/{document_id}` — implemented on main; conformance pending
 
-Returns one document summary and any permitted detail fields. Returns 404 for
-both missing and inaccessible IDs.
+Returns one document summary and any permitted detail fields, including
+`department_id` and `permission_level`. Returns 404 for both missing and
+inaccessible IDs.
 
-### `PATCH /api/v1/documents/{document_id}/permissions` — Sprint 4 target
+### `PATCH /api/v1/documents/{document_id}/permissions` — implemented on main; conformance pending
 
 Admin only. Request: `{"permission_level":2}`. Validates `1..3`, updates
 catalog metadata and all indexed chunk payloads as one logical operation,
@@ -106,13 +135,13 @@ updates `updated_at`, and returns the document summary. If index metadata
 cannot be updated consistently, fail closed and report an error rather than
 returning a partially successful response.
 
-### `POST /api/v1/documents/{document_id}/reindex` — Sprint 4 target
+### `POST /api/v1/documents/{document_id}/reindex` — implemented on main; conformance pending
 
 Admin only. Rebuilds chunks/vector records using the catalog's current
 permission level and source metadata. Response `202`:
 `{"document_id":"doc_abc123","status":"processing"}`.
 
-### `DELETE /api/v1/documents/{document_id}` — Sprint 4 target
+### `DELETE /api/v1/documents/{document_id}` — implemented on main; conformance pending
 
 Admin only. Removes source metadata, vectors, and related search-index records.
 Response `204` only after all required stores confirm deletion. Missing and
@@ -129,12 +158,13 @@ Request:
   "query": "employee benefits",
   "top_k": 5,
   "search_mode": "hybrid",
-  "filters": {"permission_level": 1}
+  "filters": {"permission_level": 1, "department_id": "Global"}
 }
 ```
 
-`top_k` is `1..20`; mode is `hybrid`, `semantic`, or `keyword`. Filters only
-narrow the server-derived authorized set. Response:
+`top_k` is `1..20`; mode is `hybrid`, `semantic`, or `keyword`. The user
+clearance and document department checks are applied server-side before
+retrieval; filters only narrow that authorized set. Response:
 
 ```json
 {
@@ -147,7 +177,7 @@ narrow the server-derived authorized set. Response:
 }
 ```
 
-### `POST /api/v1/search/debug` — Sprint 4 target (admin only)
+### `POST /api/v1/search/debug` — implemented on main; conformance pending (admin only)
 
 Accepts the same query parameters plus `candidate_limit` (1..100). Debug is
 kept separate from ordinary search to avoid accidental disclosure and latency
@@ -193,17 +223,17 @@ stage rationale; neither implies that the model is enabled today.
 
 ## Conversation persistence
 
-### `POST /api/v1/conversations` — Sprint 4 target
+### `POST /api/v1/conversations` — implemented on main; conformance pending
 
 Creates a conversation owned by the authenticated user. Optional request:
 `{"title":"Benefits question"}`. Response:
 `{"conversation_id":"conv_123","title":"Benefits question","created_at":"...","updated_at":"..."}`.
 
-### `GET /api/v1/conversations` — Sprint 4 target
+### `GET /api/v1/conversations` — implemented on main; conformance pending
 
 Returns only the caller's conversations, newest `updated_at` first, paginated.
 
-### `POST /api/v1/conversations/{conversation_id}/messages` — Sprint 4 target
+### `POST /api/v1/conversations/{conversation_id}/messages` — implemented on main; conformance pending
 
 Adds a user message to an owned conversation. Request:
 `{"content":"How much annual leave do employees receive?"}`. The API assigns
@@ -213,7 +243,7 @@ server-resolved citations are persisted by the chat/retrieval service before
 the completed turn is returned to the client. Every append updates the
 conversation's `updated_at`.
 
-### `GET /api/v1/conversations/{conversation_id}` — Sprint 4 target
+### `GET /api/v1/conversations/{conversation_id}` — implemented on main; conformance pending
 
 Returns conversation metadata (`conversation_id`, `owner_id`, `title`,
 `created_at`, `updated_at`) and ordered messages. Message shape:
@@ -238,17 +268,19 @@ content; retain citation identity/coordinates and mark an inaccessible source
 unavailable without leaking its content. Conversation access is owner-only
 unless an explicit future sharing policy is added.
 
-### `DELETE /api/v1/conversations/{conversation_id}` — Sprint 4 target
+### `DELETE /api/v1/conversations/{conversation_id}` — implemented on main; conformance pending
 
 Deletes the caller's conversation and its messages; return 204 on success and
 404 for absent or non-owned conversations. Archive is not included in this
 contract; add it only with an agreed persistence semantics.
 
-## Current implementation boundary
+## Implementation status and source of truth
 
-The repository currently implements login, upload, and search. The current
-upload/search implementation uses legacy `clearance` and department claims;
-it does not yet implement document catalog CRUD, scoring debug, or persisted
-conversations. See [sprint-4-acceptance.md](./sprint-4-acceptance.md) for the
-code inspection snapshot and acceptance cases. Update this section when
-corresponding backend integration is merged and verified.
+The current `main` baseline is merge commit `92bfc08` (PR #7). The backend now
+implements document catalog, permission changes, re-index/delete, scoring
+debug, conversation persistence, and citation preview routes. It still uses
+`clearance` as the user-side code/DTO field and assigns an uploaded document to
+the uploader's department; there is no upload `department_id` selection yet.
+Treat those as known contract gaps, not as evidence that permission levels
+and department scope are the same dimension. Track exact acceptance evidence
+in [sprint-4-acceptance.md](./sprint-4-acceptance.md).
