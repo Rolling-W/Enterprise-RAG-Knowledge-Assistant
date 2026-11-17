@@ -61,7 +61,7 @@ jobs:
 
       - name: Run backend tests
         env:
-          DATABASE_URL: sqlite+pysqlite:///:memory:
+          DATABASE_URL: "sqlite+pysqlite:///:memory:"
         run: python -m unittest discover -s backend/tests -p 'test*.py' -v
 
       - name: Compile Python sources
