@@ -10,7 +10,14 @@ describe("FileUpload", () => {
     const upload = vi
       .fn()
       .mockResolvedValue({ ...uploadFixture, permission_level: 3 });
-    render(<FileUpload allowedLevels={[1, 2, 3]} onUpload={upload} />);
+    render(
+      <FileUpload
+        allowedLevels={[1, 2, 3]}
+        allowedDepartments={["Global", "General", "Executive"]}
+        departmentId="Executive"
+        onUpload={upload}
+      />,
+    );
     expect(screen.getByLabelText("Document permission level")).toHaveValue("1");
     await userEvent.selectOptions(
       screen.getByLabelText("Document permission level"),
@@ -23,7 +30,11 @@ describe("FileUpload", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Upload document" }),
     );
-    expect(upload).toHaveBeenCalledWith(expect.any(File), 3);
+    expect(upload).toHaveBeenCalledWith(
+      expect.any(File),
+      3,
+      "Executive",
+    );
     expect(screen.getByRole("status")).toHaveTextContent("Access: Level 3");
   });
   it("shows indexed completion from the real upload contract without suggesting pending processing", async () => {

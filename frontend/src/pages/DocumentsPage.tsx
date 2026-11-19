@@ -21,6 +21,19 @@ const emptyPage: PaginatedDocuments = {
   page: 1,
   page_size: 20,
 };
+const ADMIN_DEPARTMENTS = [
+  "Global",
+  "General",
+  "Executive",
+  "HR",
+  "Finance",
+  "Legal",
+  "Engineering",
+  "Operations",
+  "IT",
+  "Sales",
+  "Marketing",
+];
 export function DocumentsPage() {
   const { session } = useAuth();
   const token = session!.access_token;
@@ -161,8 +174,14 @@ export function DocumentsPage() {
       {session!.user.permissions.includes("document:upload") ? (
         <FileUpload
           allowedLevels={role === "admin" ? [1, 2, 3] : [1]}
-          onUpload={(file, permissionLevel) =>
-            api.upload(file, token, permissionLevel)
+          allowedDepartments={
+            role === "admin"
+              ? ADMIN_DEPARTMENTS
+              : [session!.user.department]
+          }
+          departmentId={session!.user.department}
+          onUpload={(file, permissionLevel, departmentId) =>
+            api.upload(file, token, permissionLevel, departmentId)
           }
           onUploaded={refresh}
           trackProcessing

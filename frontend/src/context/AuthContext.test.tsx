@@ -37,6 +37,25 @@ it("clears the session when the backend's expires_in elapses", async () => {
   expect(screen.getByText("Signed out")).toBeInTheDocument();
 });
 
+it("restores a live session after a browser refresh", async () => {
+  sessionStorage.setItem(
+    "enterprise-rag-session",
+    JSON.stringify({
+      session: toSession(tokenFixture),
+      expiresAt: Date.now() + 3600000,
+    }),
+  );
+
+  render(
+    <AuthProvider>
+      <SessionProbe />
+    </AuthProvider>,
+  );
+
+  expect(screen.getByText("manager@enterprise.local")).toBeInTheDocument();
+  sessionStorage.removeItem("enterprise-rag-session");
+});
+
 it("ignores a late 401 for an older token after a new login", async () => {
   let resolve!: (response: Response) => void;
   const client = createApiClient({ mode: "live", fetchTransport: () => new Promise((done) => { resolve = done; }) });

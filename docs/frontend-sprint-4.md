@@ -56,17 +56,20 @@ Development shortcuts (password demo123):
 | Department Manager | manager@enterprise.local | staff | Levels 1-2 / Level 1 upload |
 | Executive | executive@enterprise.local | admin | Levels 1-3 / Levels 1-3 upload |
 
-The frontend currently has no department selector for uploads. Its demo and
-mock identities also retain a `clearance` field, while the canonical contract
-uses user `clearance_level`, document `permission_level`, and document
-`department_id` as separate attributes. The frontend must send and display the
-document department only after the backend publishes the authorized choices
-and validates assignments. A UI mapping cannot enforce the access policy.
+The upload form now sends `department_id` as a role-aware field. Executive
+accounts may choose an authorized department; Department Manager accounts are
+restricted to their own department. Standard Staff cannot upload. The backend
+remains authoritative and validates the department allowlist and assignment.
+The demo identities retain a legacy `clearance` field, while the canonical
+contract uses separate `clearance_level`, `permission_level`, and
+`department_id` attributes.
 
 Mock catalog/history are in browser memory and reset on a full reload. They
 remain available across page navigation and signing in again within the same
-mock runtime. Persistent storage across restarts belongs to the backend.
-Login itself remains in memory, so a browser reload requires signing in again.
+mock runtime. Persistent document and conversation data belongs to the backend. The live
+login session is retained in `sessionStorage`, so a browser reload restores
+the active tab's session until its stored expiry. Closing or clearing the tab
+session also ends the local login.
 
 ## Cross-layer alignment requirements
 

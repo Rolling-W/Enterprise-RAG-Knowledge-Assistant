@@ -4,8 +4,14 @@ import { fileSize, validateFile } from "../uploadPolicy";
 import type { PermissionLevel, UploadResponse } from "../api/contracts";
 
 interface FileUploadProps {
-  onUpload: (file: File, level: PermissionLevel) => Promise<UploadResponse>;
+  onUpload: (
+    file: File,
+    level: PermissionLevel,
+    departmentId: string,
+  ) => Promise<UploadResponse>;
   allowedLevels?: PermissionLevel[];
+  allowedDepartments?: string[];
+  departmentId?: string;
   onUploaded?: (response: UploadResponse) => void;
   trackProcessing?: boolean;
 }
@@ -14,11 +20,19 @@ export function FileUpload({
   onUploaded,
   trackProcessing = true,
   allowedLevels = [1],
+  allowedDepartments = [],
+  departmentId = "",
 }: FileUploadProps) {
   const titleId = useId();
   const inputId = useId();
   const levelId = useId();
+  const departmentIdField = useId();
   const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>(1);
+  const [selectedDepartment, setSelectedDepartment] = useState(
+    allowedDepartments.includes(departmentId)
+      ? departmentId
+      : allowedDepartments[0] ?? "",
+  );
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -64,6 +78,7 @@ export function FileUpload({
       const response = await onUpload(
         file,
         allowedLevels.includes(permissionLevel) ? permissionLevel : 1,
+        selectedDepartment,
       );
       if (alive.current) {
         setSuccess(
@@ -177,6 +192,23 @@ export function FileUpload({
         )}
       </div>
       <div className="permission-picker">
+        {allowedDepartments.length > 0 && (
+          <>
+            <label htmlFor={departmentIdField}>Document department</label>
+            <select
+              id={departmentIdField}
+              value={selectedDepartment}
+              disabled={busy}
+              onChange={(event) => setSelectedDepartment(event.target.value)}
+            >
+              {allowedDepartments.map((department) => (
+                <option key={department} value={department}>
+                  {department}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <label htmlFor={levelId}>Document permission level</label>
         <select
           id={levelId}

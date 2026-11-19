@@ -276,11 +276,12 @@ contract; add it only with an agreed persistence semantics.
 
 ## Implementation status and source of truth
 
-The current `main` baseline is merge commit `92bfc08` (PR #7). The backend now
-implements document catalog, permission changes, re-index/delete, scoring
-debug, conversation persistence, and citation preview routes. It still uses
-`clearance` as the user-side code/DTO field and assigns an uploaded document to
-the uploader's department; there is no upload `department_id` selection yet.
-Treat those as known contract gaps, not as evidence that permission levels
-and department scope are the same dimension. Track exact acceptance evidence
-in [sprint-4-acceptance.md](./sprint-4-acceptance.md).
+The repository tracks merge commit `92bfc08` (PR #7) as the historical baseline.
+The backend implements document catalog, permission changes, re-index/delete,
+scoring debug, conversation persistence, and citation preview routes. The
+current working implementation requires and validates upload `department_id`,
+retains live login state across page refresh in the frontend, and still carries
+the legacy `clearance` code/DTO field. Treat the remaining naming and full
+cross-layer sign-off work as integration gaps, not evidence that permission
+levels and department scope are the same dimension. Track exact acceptance
+evidence in [sprint-4-acceptance.md](./sprint-4-acceptance.md).

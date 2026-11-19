@@ -12,4 +12,5 @@ afterEach(() => {
   mockTransport.reset();
   vi.useRealTimers();
   window.location.hash = "";
+  window.sessionStorage.clear();
 });
