@@ -1,4 +1,35 @@
 services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: erag-ollama
+    profiles: ["local-llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/var/lib/ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: "10m"
+      OLLAMA_NUM_PARALLEL: "1"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  ollama-init:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+    depends_on:
+      - ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "ollama pull \"$$OLLAMA_MODEL\""
+
   qdrant:
     image: qdrant/qdrant:latest
     container_name: erag-qdrant
@@ -34,6 +65,14 @@ services:
       - QDRANT_PORT=6333
       - DATABASE_URL=postgresql+psycopg://erag:erag_local@postgres:5432/erag
       - APP_ENV=development
+      - LLM_MODE=${LLM_MODE:-auto}
+      - LLM_LOCAL_ENABLED=${LLM_LOCAL_ENABLED:-auto}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      - LLM_CLOUD_FALLBACK=${LLM_CLOUD_FALLBACK:-true}
+      - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-30}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4.1-mini}
     depends_on:
       qdrant:
         condition: service_started
@@ -54,3 +93,4 @@ services:
 volumes:
   qdrant_storage:
   postgres_storage:
+  ollama_storage:
