@@ -348,6 +348,16 @@ export function createMockTransport(options: MockOptions = {}) {
       if (![1, 2, 3].includes(level))
         return invalid("permission_level", "Choose Level 1, 2 or 3");
       if (!admin && level !== 1) return forbidden();
+      const departmentId = String(body?.get("department_id") ?? "").trim();
+      if (!departmentId) return invalid("department_id", "Choose a department");
+      const uploadDepartments = new Set([
+        "Global", "General", "Executive", "HR", "Finance", "Legal",
+        "Engineering", "Operations", "IT", "Sales", "Marketing",
+      ]);
+      if (!uploadDepartments.has(departmentId))
+        return invalid("department_id", "Choose an authorized department");
+      if (!admin && departmentId !== user.department)
+        return forbidden();
       const error = validateFile(file);
       if (error) return json({ detail: error }, 400);
       if (file.name.includes("upload-error"))
@@ -384,7 +394,7 @@ export function createMockTransport(options: MockOptions = {}) {
             : (await readText()).slice(0, 16000),
       };
 
-      documentDepartments.set(document.document_id, user.department);
+      documentDepartments.set(document.document_id, departmentId);
 
       documents.unshift(document);
       startProcessing(document, file.name.includes("processing-error"));

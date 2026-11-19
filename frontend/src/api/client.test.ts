@@ -54,10 +54,13 @@ describe("HTTP client and display adapters", () => {
     expect(JSON.parse(transport.mock.calls[1][1].body)).toEqual({
       permission_level: 3,
     });
-    await client.upload(new File(["policy"], "policy.txt"), "token", 2);
+    await client.upload(new File(["policy"], "policy.txt"), "token", 2, "General");
     expect(
       (transport.mock.calls[2][1].body as FormData).get("permission_level"),
     ).toBe("2");
+    expect(
+      (transport.mock.calls[2][1].body as FormData).get("department_id"),
+    ).toBe("General");
     transport.mockResolvedValueOnce(new Response(null, { status: 204 }));
     await expect(
       client.deleteDocument("doc/a", "token"),

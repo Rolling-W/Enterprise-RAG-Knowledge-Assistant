@@ -143,20 +143,20 @@ describe("Sprint 4 mock contract", () => {
       user = await login("staff"),
       admin = await login("executive");
     const file = new File(["policy"], "policy.txt");
-    const uploaded = await client.upload(file, staff.access_token);
+    const uploaded = await client.upload(file, staff.access_token, 1, "General");
     expect(uploaded).toMatchObject({
       permission_level: 1,
       status: "processing",
       creator: { user_id: staff.user.user_id },
     });
     await expect(
-      client.upload(file, staff.access_token, 2),
+      client.upload(file, staff.access_token, 2, "General"),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
-      client.upload(file, user.access_token, 1),
+      client.upload(file, user.access_token, 1, "General"),
     ).rejects.toMatchObject({ status: 403 });
     expect(
-      (await client.upload(file, admin.access_token, 3)).permission_level,
+      (await client.upload(file, admin.access_token, 3, "Executive")).permission_level,
     ).toBe(3);
     for (const level of ["0", "4", "1.5", "invalid"]) {
       const body = new FormData();
@@ -346,15 +346,17 @@ describe("Sprint 4 mock contract", () => {
   it("supports upload processing failures and rejects invalid files", async () => {
     const { access_token } = await login();
     await expect(
-      client.upload(new File([], "empty.txt"), access_token),
+      client.upload(new File([], "empty.txt"), access_token, 1, "General"),
     ).rejects.toMatchObject({ status: 400 });
     await expect(
-      client.upload(new File(["exe"], "bad.exe"), access_token),
+      client.upload(new File(["exe"], "bad.exe"), access_token, 1, "General"),
     ).rejects.toMatchObject({ status: 400 });
     vi.useFakeTimers();
-    const uploaded = await client.upload(
+    const uploaded = await     client.upload(
       new File(["text"], "processing-error.pdf"),
       access_token,
+    1,
+    "General",
     );
     await vi.advanceTimersByTimeAsync(20);
     expect(

@@ -196,6 +196,8 @@ class UploadResponse(BaseModel):
     size_bytes: int = Field(ge=0)
     status: str = "queued"
     message: str
+    department_id: str
+    permission_level: int = Field(ge=1, le=3)
 
 
 class DocumentCreator(BaseModel):
@@ -294,6 +296,19 @@ ROLE_PERMISSIONS = {
     "Executive": (3, ["document:read", "document:upload", "document:manage"]),
     "Department Manager": (2, ["document:read", "document:upload"]),
     "Standard Staff": (1, ["document:read"]),
+}
+UPLOAD_DEPARTMENTS = {
+    "Global",
+    "General",
+    "Executive",
+    "HR",
+    "Finance",
+    "Legal",
+    "Engineering",
+    "Operations",
+    "IT",
+    "Sales",
+    "Marketing",
 }
 PRODUCT_ROLE_MAP = {
     "Executive": "admin",
@@ -907,6 +922,7 @@ async def upload_document(
     file: Annotated[UploadFile, File(description="PDF, Markdown, or plain text document")],
     user: Annotated[AuthenticatedUser, Depends(require_upload_permission)],
     db: Annotated[Session, Depends(get_db)],
+    department_id: Annotated[str, Form(min_length=1)],
     permission_level: Annotated[int, Form(ge=1, le=3)] = 1,
 ) -> UploadResponse:
     supported_types = {
@@ -934,6 +950,18 @@ async def upload_document(
             detail="Staff can only upload Level 1 documents",
         )
 
+    department_id = department_id.strip()
+    if department_id not in UPLOAD_DEPARTMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail="Department is not an authorized upload department",
+        )
+    if user.role != "admin" and department_id != user.department:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only upload documents to your own department",
+        )
+
     document_id = f"doc_{uuid4().hex[:12]}"
     filename = file.filename or "unnamed"
 
@@ -946,7 +974,7 @@ async def upload_document(
             title=filename,
             content_type=file.content_type,
             content=content,
-            department_id=user.department,
+            department_id=department_id,
             permission_level=permission_level,
             creator_id=user.user_id,
             creator_display_name=user.username,
@@ -971,7 +999,7 @@ async def upload_document(
             filename=filename,
             content_type=file.content_type,
             content=content,
-            department_id=user.department,
+            department_id=department_id,
             permission_level=permission_level,
         )
 
@@ -1034,9 +1062,11 @@ async def upload_document(
         status="indexed",
         message=(
             f"Indexed {chunk_count} chunks for "
-            f"{user.department} with permission level "
+            f"{department_id} with permission level "
             f"{permission_level}"
         ),
+        department_id=department_id,
+        permission_level=permission_level,
     )
 
 

@@ -237,6 +237,7 @@ describe("Sprint 4 frontend workflows", () => {
       expect.any(File),
       expect.any(String),
       3,
+      "Executive",
     );
     expect(within(row).getByText("Level 3")).toBeInTheDocument();
     await waitFor(

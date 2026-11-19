@@ -34,6 +34,7 @@ export interface UploadResponse {
   size_bytes: number;
   status: "queued" | DocumentStatus;
   message?: string;
+  department_id?: string;
   permission_level?: PermissionLevel;
   creator?: CreatorSummary;
   created_at?: string;

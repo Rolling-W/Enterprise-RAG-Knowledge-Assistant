@@ -89,10 +89,11 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(len(token.split(".")), 3)
         return {"Authorization": f"Bearer {token}"}
 
-    def upload(self, headers):
+    def upload(self, headers, department_id="General"):
         response = self.client.post(
             "/api/v1/upload",
             headers=headers,
+            data={"department_id": department_id},
             files={"file": ("weekly-policy.md", b"# Leave policy\nEmployees receive 23 days of annual leave.\nContact HR for details.", "text/markdown")},
         )
         self.assertEqual(response.status_code, 202, response.text)
@@ -123,7 +124,7 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/v1/search", json={"query": "leave"}).status_code, 401)
         self.assertEqual(self.client.post("/api/v1/search", headers={"Authorization": "Bearer invalid"}, json={"query": "leave"}).status_code, 401)
         staff = self.login("staff@enterprise.local")
-        response = self.client.post("/api/v1/upload", headers=staff, files={"file": ("policy.txt", b"leave", "text/plain")})
+        response = self.client.post("/api/v1/upload", headers=staff, data={"department_id": "General"}, files={"file": ("policy.txt", b"leave", "text/plain")})
         self.assertEqual(response.status_code, 403)
         manager = self.login()
         document_id = self.upload(manager)
@@ -159,7 +160,7 @@ class ApiIntegrationTests(unittest.TestCase):
 
 
     def test_empty_upload_and_openapi_contract(self):
-        response = self.client.post("/api/v1/upload", headers=self.login(), files={"file": ("empty.txt", b"", "text/plain")})
+        response = self.client.post("/api/v1/upload", headers=self.login(), data={"department_id": "General"}, files={"file": ("empty.txt", b"", "text/plain")})
         self.assertEqual(response.status_code, 400)
         response = self.client.get("/openapi.json")
         self.assertEqual(response.status_code, 200)
@@ -167,6 +168,34 @@ class ApiIntegrationTests(unittest.TestCase):
         for path in ("/api/v1/auth/login", "/api/v1/upload", "/api/v1/search"):
             self.assertIn(path, spec["paths"])
         self.assertIn("score", spec["components"]["schemas"]["SearchResult"]["properties"])
+
+    def test_department_assignment_is_required_and_authorized(self):
+        executive = self.login("executive@enterprise.local")
+        missing = self.client.post(
+            "/api/v1/upload",
+            headers=executive,
+            files={"file": ("general-policy.txt", b"General policy", "text/plain")},
+        )
+        self.assertEqual(missing.status_code, 422)
+
+        uploaded = self.client.post(
+            "/api/v1/upload",
+            headers=executive,
+            data={"department_id": "General", "permission_level": "2"},
+            files={"file": ("general-policy.txt", b"General policy", "text/plain")},
+        )
+        self.assertEqual(uploaded.status_code, 202, uploaded.text)
+        self.assertEqual(uploaded.json()["department_id"], "General")
+        self.assertEqual(uploaded.json()["permission_level"], 2)
+
+        manager = self.login("manager@enterprise.local")
+        unauthorized = self.client.post(
+            "/api/v1/upload",
+            headers=manager,
+            data={"department_id": "Executive"},
+            files={"file": ("policy.txt", b"Executive policy", "text/plain")},
+        )
+        self.assertEqual(unauthorized.status_code, 403)
 
 
     def test_multi_document_hybrid_retrieval(self):
@@ -191,6 +220,7 @@ class ApiIntegrationTests(unittest.TestCase):
             response = self.client.post(
                 "/api/v1/upload",
                 headers=headers,
+                data={"department_id": "General"},
                 files={
                     "file": (
                         filename,
@@ -245,6 +275,7 @@ class ApiIntegrationTests(unittest.TestCase):
         response = self.client.post(
             "/api/v1/upload",
             headers=headers,
+            data={"department_id": "General"},
             files={
                 "file": (
                     "employee-handbook.txt",
@@ -303,6 +334,7 @@ class ApiIntegrationTests(unittest.TestCase):
         response = self.client.post(
             "/api/v1/upload",
             headers=headers,
+            data={"department_id": "General"},
             files={
                 "file": (
                     pdf_path.name,
@@ -376,6 +408,7 @@ class ApiIntegrationTests(unittest.TestCase):
         response = self.client.post(
             "/api/v1/upload",
             headers=headers,
+            data={"department_id": "General"},
             files={
                 "file": (
                     pdf_path.name,
@@ -446,6 +479,7 @@ class ApiIntegrationTests(unittest.TestCase):
             response = self.client.post(
                 "/api/v1/upload",
                 headers=headers,
+                data={"department_id": "General"},
                 files={
                     "file": (
                         filename,
@@ -765,7 +799,7 @@ class ApiIntegrationTests(unittest.TestCase):
         executive_headers = self.login(
             "executive@enterprise.local"
         )
-        document_id = self.upload(executive_headers)
+        document_id = self.upload(executive_headers, "Executive")
 
         # Executive retrieves the actual chunk ID.
         search_response = self.client.post(
