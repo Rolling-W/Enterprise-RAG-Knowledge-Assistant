@@ -1,163 +1,273 @@
 # Enterprise RAG Knowledge Assistant
 
-An enterprise-grade AI knowledge management and retrieval platform designed to securely index, search, and synthesize internal multi-format documentation with vector-level Role-Based Access Control (RBAC) and interactive page/line citations.
+Enterprise RAG Knowledge Assistant ingests internal PDF, Markdown, and text documents, performs role-aware semantic retrieval, and generates grounded answers with document and line citations.
 
-## 🔗 Quick Links
-- **Jira Management Board**: [Jira Board](https://ruolinw95.atlassian.net/jira/software/projects/ERAG/boards/1)
-- **Course**: CS Capstone Project - Clark University
+## Technology Stack
 
-## 👥 Team Members & Roles
-- **Ruolin Wang**: Project Manager & Lead Architect
-- **Yen-Jui (Ray) Liang**: Backend & RAG AI Engineer
-- **Yunting Ma**: Full-Stack & Frontend Lead Engineer
+- Frontend: React, TypeScript, Vite
+- Backend: Python 3.11, FastAPI
+- Databases: PostgreSQL, Qdrant
+- Retrieval: vector search and BM25 hybrid retrieval
+- Answer generation: Ollama or OpenAI API
+- Deployment: Docker Compose
 
-## 🛠️ Tech Stack
-- **Backend**: Python 3.11, FastAPI, Qdrant Vector DB, Rank-BM25, LangChain
-- **Frontend**: React.js, TypeScript, Tailwind CSS, Vite
-- **DevOps**: Docker, Docker Compose, GitHub Actions
+## Services and Ports
 
-## 🧩 Project Goals
-- Enable secure enterprise document ingestion from PDF, Markdown, and text-based files
-- Build a semantic retrieval pipeline with reranking and grounded citations
-- Support role-aware search experiences for different user groups
-- Deliver a production-ready local development scaffold for demo and future iteration
+| Service | URL or port | Description |
+| --- | --- | --- |
+| Frontend | http://localhost:5173 | Web application |
+| Backend API | http://localhost:8000 | FastAPI backend |
+| Swagger | http://localhost:8000/docs | API documentation |
+| Health check | http://localhost:8000/health | Backend and database status |
+| Qdrant | http://localhost:6333/dashboard | Vector database dashboard |
+| PostgreSQL | localhost:5433 | Database |
+| Ollama | http://localhost:11434 | Local model API, optional |
 
-## 🏗️ Repository Structure
-```text
-Enterprise-RAG-Knowledge-Assistant/
-├── README.md
-├── .gitignore
-├── .env.example
-├── docker-compose.yml
-├── docs/
-│   ├── architecture.png
-│   └── api-spec.md
-├── backend/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-└── frontend/
-    ├── package.json
-    ├── src/
-    │   ├── App.tsx
-    │   └── main.tsx
-    └── Dockerfile
+## Quick Start with Docker
+
+Docker Compose is the recommended deployment method.
+
+### 1. Create the environment file
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
 ```
 
-
-## 🚀 Quick Start (Local Setup)
-
-
-### 1. Install Dependencies
-
-Requires Python 3.11, Node.js/npm, and Docker.
-
-```bash
-# Clone the repository
-git clone https://github.com/Rolling-W/Enterprise-RAG-Knowledge-Assistant.git
-cd Enterprise-RAG-Knowledge-Assistant
-
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
-
-cd frontend
-npm install
-cd ..
-```
-
-
-### 2. Configure Environment
+Linux or macOS:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and replace `YOUR_OPENAI_API_KEY` with your own OpenAI API key.
+Do not commit `.env` or real API keys.
 
-### 3. Start PostgreSQL & Qdrant
+### 2. Start without local Ollama
 
-```bash
-docker compose up -d postgres qdrant
-```
-
-### 4. Initialize Databases
-
-Load environment variables in the terminal:
+Use this mode on machines without NVIDIA GPU support or when users prefer only an online model:
 
 ```bash
-set -a
-source .env
-set +a
+docker compose up -d
 ```
 
-Run database migrations and initialize Qdrant:
+Set cloud credentials in `.env`:
+
+```env
+LLM_MODE=cloud
+LLM_CLOUD_FALLBACK=true
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+OPENAI_MODEL=gpt-4.1-mini
+LLM_TIMEOUT_SECONDS=30
+```
+
+### 3. Start with local Ollama
+
+On a machine with NVIDIA GPU support:
 
 ```bash
-alembic upgrade head
-python -m backend.init_qdrant
+docker compose --profile local-llm up -d
 ```
 
-### 5. Start Backend
+This profile starts Ollama and downloads the default model:
 
-In the same terminal:
+```text
+qwen2.5:7b-instruct-q4_K_M
+```
+
+Recommended `.env` configuration:
+
+```env
+LLM_MODE=auto
+LLM_LOCAL_ENABLED=auto
+LLM_CLOUD_FALLBACK=true
+OLLAMA_BASE_URL=http://ollama:11434/v1
+OLLAMA_MODEL=qwen2.5:7b-instruct-q4_K_M
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+OPENAI_MODEL=gpt-4.1-mini
+LLM_TIMEOUT_SECONDS=30
+```
+
+The default Docker configuration has been tested with an NVIDIA GeForce RTX 4060 Laptop GPU and the Q4_K_M 7B model.
+
+## Answer Generation Routing
+
+The backend uses the following routing behavior:
+
+| Setting | Behavior |
+| --- | --- |
+| `LLM_MODE=auto` | Prefer reachable local Ollama, then fall back to the cloud API |
+| `LLM_MODE=local` | Use only local Ollama |
+| `LLM_MODE=cloud` | Use only the configured cloud API |
+| `LLM_MODE=none` | Disable answer generation |
+| `LLM_LOCAL_ENABLED=true` | Force local Ollama attempts |
+| `LLM_LOCAL_ENABLED=false` | Skip local Ollama |
+| `LLM_LOCAL_ENABLED=auto` | Probe Ollama; fall back to NVIDIA GPU detection if it is unavailable |
+| `LLM_CLOUD_FALLBACK=false` | Do not automatically call the cloud API after a local failure |
+
+Local and cloud providers share the same grounded-answer prompt and return concise answers based only on authorized retrieved excerpts.
+
+If no provider is available, the backend returns a clear service error rather than fabricating an answer.
+
+## Local Ollama Management
+
+List downloaded models:
 
 ```bash
-python -m uvicorn backend.main:app --reload
+curl http://localhost:11434/api/tags
 ```
 
-Backend: http://localhost:8000
+Pull another model:
 
-### 6. Start Frontend
+```bash
+docker exec erag-ollama ollama pull qwen2.5:7b-instruct-q4_K_M
+```
 
-Open another terminal:
+Set it in `.env`:
+
+```env
+OLLAMA_MODEL=MODEL_NAME
+```
+
+Then restart the backend:
+
+```bash
+docker compose up -d --build backend
+```
+
+Stop local LLM containers:
+
+```bash
+docker compose --profile local-llm down ollama ollama-init
+```
+
+Stop the complete Docker stack:
+
+```bash
+docker compose down
+```
+
+To remove persistent databases and downloaded Ollama models:
+
+```bash
+docker compose down -v
+```
+
+## Manual Python and Frontend Development
+
+The full Docker stack is the recommended setup. For local development outside Docker:
+
+### Backend
+
+Requires Python 3.11:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r backend/requirements.txt
+python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+PostgreSQL and Qdrant must be available, and the `.env` database URL must use the host ports:
+
+```env
+DATABASE_URL=postgresql+psycopg://erag:erag_local@localhost:5433/erag
+QDRANT_HOST=localhost
+QDRANT_PORT=6333
+```
+
+### Frontend
+
+Requires Node.js and npm:
 
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
 Frontend: http://localhost:5173
 
-Qdrant Dashboard: http://localhost:6333/dashboard
+## Testing
 
-### Notes
+Backend routing tests:
 
-- Never commit `.env` or real API keys.
-- Run `alembic upgrade head` after pulling database schema changes.
-- OpenAI API access is required for LLM-generated answers.
-- Department-based document access control is pending Sprint 5 policy alignment.
-
-
-## 🔍 Sample API
-
-```http
-GET /health
-POST /api/v1/auth/login
-POST /api/v1/upload
-POST /api/v1/search
+```bash
+docker compose exec backend python -m unittest backend.tests.test_answer_generation_service -v
 ```
 
-## 📄 Documentation
-- See [docs/api-spec.md](docs/api-spec.md) for the REST interface contract.
-- See [docs/rbac-security.md](docs/rbac-security.md) for the Sprint 4 permission model.
-- See [docs/sprint-4-acceptance.md](docs/sprint-4-acceptance.md) for acceptance cases and the integration snapshot.
-- Once the backend is running, use the generated [Swagger UI](http://localhost:8000/docs)
-  or [OpenAPI JSON](http://localhost:8000/openapi.json) as the executable contract.
-- Architecture diagrams and planning notes are kept under the [docs](docs) directory.
+Frontend tests:
 
-## ✅ Assignment 3 Scaffold Status
-This repository is initialized as a clean engineering scaffold for the course assignment, with:
-- a structured project layout
-- a sample FastAPI backend
-- a React + TypeScript frontend starter
-- Docker-based local deployment support
-- documentation and environment templates
+```bash
+cd frontend
+npm test -- --run
+npm run build
+```
 
-## Sprint 1 Notes
-- Initial backend and frontend scaffold prepared for assignment review.
-- Docker Compose and sample API routes are included for local demo.
-- Repository structure follows a clear engineering workflow suitable for future feature development.
+## Troubleshooting
 
-## 🤝 Contributing
-This project is being developed by the team listed above. Contributions should follow a clear PR workflow and maintain a clean engineering structure.
+### Ollama does not appear in Docker
+
+Start the project with the local profile:
+
+```bash
+docker compose --profile local-llm up -d
+```
+
+The Ollama service is intentionally not started by plain `docker compose up -d`.
+
+### Ollama uses CPU instead of GPU
+
+Verify Docker Desktop can see the NVIDIA GPU and check:
+
+```bash
+nvidia-smi
+docker compose config
+```
+
+For CPU-only machines, use:
+
+```env
+LLM_MODE=cloud
+LLM_LOCAL_ENABLED=false
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+```
+
+Then start normally:
+
+```bash
+docker compose up -d
+```
+
+### Cloud API is not configured
+
+Set `OPENAI_API_KEY` in `.env`, or set:
+
+```env
+LLM_MODE=none
+```
+
+### Rebuild after code changes
+
+```bash
+docker compose up -d --build
+```
+
+For the local Ollama profile:
+
+```bash
+docker compose --profile local-llm up -d --build
+```
+
+## Documentation
+
+- [API specification](docs/api-spec.md)
+- [RBAC security](docs/rbac-security.md)
+- [Sprint 4 acceptance](docs/sprint-4-acceptance.md)
+- [Architecture and integration documentation](docs/)
+
+## Team
+
+- Ruolin Wang: Project Manager and Lead Architect
+- Yen-Jui (Ray) Liang: Backend and RAG AI Engineer
+- Yunting Ma: Full-Stack and Frontend Lead Engineer

@@ -1,5 +1,8 @@
 
 import os
+import shutil
+import subprocess
+from urllib.request import urlopen
 
 from openai import OpenAI
 
@@ -28,6 +31,74 @@ Follow these rules strictly:
 """
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_nvidia_gpu() -> bool:
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return False
+
+    try:
+        result = subprocess.run(
+            [nvidia_smi, "-L"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _local_llm_enabled() -> bool:
+    configured = os.getenv("LLM_LOCAL_ENABLED", "auto").strip().lower()
+    if configured in {"true", "1", "yes", "on"}:
+        return True
+    if configured in {"false", "0", "no", "off"}:
+        return False
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434/v1").rstrip("/")
+    tags_url = base_url.removesuffix("/v1") + "/api/tags"
+    try:
+        with urlopen(tags_url, timeout=2) as response:
+            return response.status == 200
+    except Exception:
+        return _has_nvidia_gpu()
+
+
+def _chat_completion(
+    *,
+    client,
+    model: str,
+    question: str,
+    context: str,
+) -> str:
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": ANTI_HALLUCINATION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"User question:\n{question}\n\n"
+                    f"Retrieved document excerpts:\n{context}"
+                ),
+            },
+        ],
+        max_tokens=500,
+    )
+
+    answer = response.choices[0].message.content.strip()
+    if not answer:
+        raise RuntimeError("LLM returned an empty answer")
+    return answer
+
+
 def generate_answer(
     *,
     question: str,
@@ -49,21 +120,64 @@ def generate_answer(
             "sufficient information to answer this question."
         )
 
-    client = OpenAI()
+    mode = os.getenv("LLM_MODE", "auto").strip().lower()
+    timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+    cloud_fallback = _env_bool("LLM_CLOUD_FALLBACK", True)
+    errors = []
 
-    response = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-        instructions=ANTI_HALLUCINATION_SYSTEM_PROMPT,
-        input=(
-            f"User question:\n{question}\n\n"
-            f"Retrieved document excerpts:\n{context}"
-        ),
-        max_output_tokens=500,
+    use_local = mode in {"auto", "local"} and _local_llm_enabled()
+    if use_local:
+        try:
+            local_client = OpenAI(
+                api_key="ollama",
+                base_url=os.getenv(
+                    "OLLAMA_BASE_URL",
+                    "http://ollama:11434/v1",
+                ),
+                timeout=timeout,
+            )
+            return _chat_completion(
+                client=local_client,
+                model=os.getenv(
+                    "OLLAMA_MODEL",
+                    "qwen2.5:7b-instruct-q4_K_M",
+                ),
+                question=question,
+                context=context,
+            )
+        except Exception as exc:
+            errors.append(f"local LLM: {exc}")
+
+    use_cloud = mode in {"auto", "cloud"} and (
+        cloud_fallback or mode == "cloud"
     )
+    if use_cloud:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            try:
+                cloud_client = OpenAI(api_key=api_key, timeout=timeout)
+                return _chat_completion(
+                    client=cloud_client,
+                    model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+                    question=question,
+                    context=context,
+                )
+            except Exception as exc:
+                errors.append(f"cloud API: {exc}")
+        elif mode == "cloud":
+            raise RuntimeError(
+                "Cloud LLM is enabled but OPENAI_API_KEY is not configured"
+            )
 
-    answer = response.output_text.strip()
+    if mode == "none":
+        raise RuntimeError("LLM answer generation is disabled by LLM_MODE=none")
 
-    if not answer:
-        raise RuntimeError("LLM returned an empty answer")
+    if errors:
+        raise RuntimeError(
+            "All configured answer generation providers failed: "
+            + "; ".join(errors)
+        )
 
-    return answer
+    raise RuntimeError(
+        "No answer generation provider is available; configure Ollama or OPENAI_API_KEY"
+    )
